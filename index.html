@@ -203,9 +203,13 @@ async function getWindLatest() {
 
 // Currents (try Data API max_slack; if empty, fallback to DPAPI predictions)
 function fmtDateForNOAA(d) {
-  const yyyy = d.getFullYear(); const mm = String(d.getMonth()+1).padStart(2,'0');
-  const dd = String(d.getDate()).padStart(2,'0'); const HH = String(d.getHours()).padStart(2,'0');
-  const MM = String(d.getMinutes()).padStart(2,'0'); return `${yyyy}${mm}${dd}%20${HH}:${MM}`;
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  const HH = String(d.getHours()).padStart(2,'0');
+  const MM = String(d.getMinutes()).padStart(2,'0');
+  // IMPORTANT: return a literal space; URLSearchParams will encode it once.
+  return `${yyyy}${mm}${dd} ${HH}:${MM}`;
 }
 
 // Data API: station=<BASE>&bin=<N>
@@ -221,15 +225,19 @@ async function getCurrents24h_DataAPI(stationIdOrCombined) {
     units: 'english',
     format: 'json',
     interval: 'max_slack',
-    begin_date: fmtDateForNOAA(now),
-    end_date: fmtDateForNOAA(end),
+    begin_date: fmtDateForNOAA(now),   // now returns a space
+    end_date:   fmtDateForNOAA(end),
   });
   if (bin != null) params.set('bin', String(bin));
 
   const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?${params}`;
-  showCurrStatus('Fetching Data API…');  // ← you asked where this goes: right before fetch
+  // helpful while testing:
+  // console.log('DataAPI URL:', url);
   const r = await fetch(url, { cache: 'no-store' });
-  if (!r.ok) throw new Error('currents_dataapi ' + r.status);
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error(`currents_dataapi ${r.status}: ${txt}`);
+  }
   return r.json();
 }
 
@@ -509,25 +517,17 @@ async function refreshAll() {
     // Currents — resolve a valid bin, then try Data API (base+bin), fallback to DPAPI (base+bin)
     (async () => {
       try {
-        const resolved = await resolveCurrentsBinId(CURRENTS_STATION);  // returns e.g. "SFB1201_14" or your original if bins fail
+        const resolved = await resolveCurrentsBinId(CURRENTS_STATION); // ok to keep; if it can’t resolve, it returns your original
         const d = await getCurrents24h_DataAPI(resolved);
         const ok = renderCurrents_DataAPI(d);
         if (!ok) {
-          const d2 = await getCurrents24h_DPAPI(resolved);
-          renderCurrents_DPAPI(d2);
+          document.getElementById('currentsList').innerHTML = '<li>No current events in next 24h</li>';
+          document.getElementById('currentsStatus').textContent = '';
         }
-        showCurrStatus('');
       } catch (e) {
-        try {
-          const resolved = await resolveCurrentsBinId(CURRENTS_STATION);
-          const d2 = await getCurrents24h_DPAPI(resolved);
-          renderCurrents_DPAPI(d2);
-          showCurrStatus('');
-        } catch (e2) {
-          document.getElementById('currentsList').innerHTML = '<li>Error loading currents</li>';
-          showCurrStatus('No response from either API for this station/bin.');
-          console.error('Currents error:', e, e2);
-        }
+        document.getElementById('currentsList').innerHTML = '<li>Error loading currents</li>';
+        document.getElementById('currentsStatus').textContent = 'Currents API error (see console).';
+        console.error(e);
       }
     })();
 
