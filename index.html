@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Encinal Paddling Dashboard</title>
+<style>
+  :root {
+    --bg: #0b1220;
+    --fg: #e9eef7;
+    --muted:#9fb0c9;
+    --card:#101a2e;
+    --accent:#6cc0ff;
+    --good:#32d296;
+    --warn:#ffd166;
+    --bad:#ff6b6b;
+  }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  header { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:12px; }
+  header h1 { font-size: 20px; line-height:1.2; margin:0; letter-spacing:0.2px; }
+  header .meta { font-size: 12px; color: var(--muted); }
+  .grid {
+    display:grid;
+    grid-template-columns: repeat(2, minmax(0,1fr));
+    gap:12px;
+  }
+  @media (max-width: 720px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 14px 14px 16px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.25);
+    min-height: 140px;
+  }
+  .card h2 { margin:0 0 10px; font-size:16px; letter-spacing:0.3px; color:var(--accent); }
+  .row { display:flex; gap:14px; flex-wrap:wrap; align-items:baseline; }
+  .big { font-size: 36px; font-weight: 700; }
+  .unit { font-size:14px; color:var(--muted); margin-left:6px; }
+  .sub { font-size:14px; color:var(--muted); }
+  .list { margin: 6px 0 0 0; padding:0; list-style:none; }
+  .list li { padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06); }
+  .list li:last-child { border-bottom:0; }
+  .status { font-size:12px; color:var(--muted); margin-top:8px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+  .small { font-size:12px; color:var(--muted); }
+  .pill { font-size:11px; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.08); margin-left:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Encinal Paddling Dashboard <span class="pill mono" id="stationsPill"></span></h1>
+    <div class="meta">
+      <span id="clock">--:--</span>
+      &nbsp;•&nbsp; Refreshes every 5 min
+    </div>
+  </header>
+
+  <div class="grid">
+    <section class="card" id="windCard">
+      <h2>Wind (Alameda 9414750)</h2>
+      <div class="row">
+        <div class="big" id="windSpeed">--</div><div class="unit">kt</div>
+        <div class="sub" id="windGust">(gust -- kt)</div>
+        <div class="sub" id="windDir">—° —</div>
+      </div>
+      <div class="status small" id="windTime">Loading…</div>
+    </section>
+
+    <section class="card" id="wavesCard">
+      <h2>Waves (CDIP 142 / SF Bar)</h2>
+      <div class="row">
+        <div class="big" id="waveHeight">--</div><div class="unit">ft</div>
+        <div class="sub" id="wavePeriod">— s</div>
+        <div class="sub" id="waveDir">—° —</div>
+      </div>
+      <div class="status small" id="wavesTime">Loading…</div>
+    </section>
+
+    <section class="card" id="tidesCard">
+      <h2>Tides Today (MLLW)</h2>
+      <ul class="list" id="tidesList"><li>Loading…</li></ul>
+      <div class="status small" id="tidesStatus"></div>
+    </section>
+
+    <section class="card" id="currentsCard">
+      <h2>Currents (Next 24h)</h2>
+      <ul class="list" id="currentsList"><li>Loading…</li></ul>
+      <div class="status small" id="currentsStatus"></div>
+    </section>
+  </div>
+</div>
+
+<script>
+/* ====== CONFIG ====== */
+const NOAA_TIDE_WIND_STATION = "9414750";     // Alameda
+const CURRENTS_STATION       = "SFB1201_20"; // Entrance Outside
+const ERDDAP_BASE = "https://erddap.cencoos.org/erddap";
+const REFRESH_MS = 5 * 60 * 1000; // 5 minutes
+
+document.getElementById('stationsPill').textContent =
+  `Tide/Wind:${NOAA_TIDE_WIND_STATION} • Waves:CDIP142 • Currents:${CURRENTS_STATION}`;
+
+/* ====== HELPERS ====== */
+const toCardinal = deg => {
+  if (deg == null || isNaN(deg)) return "—";
+  const dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+  return dirs[Math.round(((deg % 360)+360)%360 / 22.5) % 16];
+};
+const ft = m => m * 3.28084;
+const fmt1 = n => n == null || isNaN(+n) ? "—" : (+n).toFixed(1);
+const fmt0 = n => n == null || isNaN(+n) ? "—" : Math.round(+n);
+const tzFmt = iso => { try { return new Date(iso).toLocaleString(); } catch { return iso || "—"; } };
+const todayYYYYMMDD = () => {
+  const d = new Date(); const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0'); const dd = String(d.getDate()).padStart(2,'0');
+  return `${y}${m}${dd}`;
+};
+const setClock = () => {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleString(undefined, { weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+};
+setInterval(setClock, 1000); setClock();
+
+/* ====== FETCHERS ====== */
+// Tides (today hilo)
+async function getTidesToday() {
+  const day = todayYYYYMMDD();
+  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?` +
+    `product=predictions&interval=hilo&time_zone=lst_ldt&datum=MLLW&units=english&format=json` +
+    `&station=${NOAA_TIDE_WIND_STATION}&begin_date=${day}&end_date=${day}`;
+  const r = await fetch(url, { cache: 'no-store' });
+  return r.json();
+}
+
+// Wind (latest) – fields are s,g,d
+async function getWindLatest() {
+  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?` +
+    `product=wind&time_zone=lst_ldt&units=english&format=json&station=${NOAA_TIDE_WIND_STATION}&date=latest`;
+  const r = await fetch(url, { cache: 'no-store' });
+  return r.json();
+}
+
+// Currents (max_slack events, 24h window)
+function fmtDateForNOAA(d) {
+  const yyyy = d.getFullYear(); const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0'); const HH = String(d.getHours()).padStart(2,'0');
+  const MM = String(d.getMinutes()).padStart(2,'0');
+  return `${yyyy}${mm}${dd}%20${HH}:${MM}`;
+}
+async function getCurrents24h() {
+  const now = new Date(); const end = new Date(now.getTime()+24*60*60*1000);
+  const beginStr = fmtDateForNOAA(now); const endStr = fmtDateForNOAA(end);
+  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?product=currents_predictions` +
+    `&station=${CURRENTS_STATION}&interval=max_slack&time_zone=lst_ldt&units=english&format=json` +
+    `&begin_date=${beginStr}&end_date=${endStr}`;
+  const r = await fetch(url, { cache: 'no-store' });
+  return r.json();
+}
+
+// Waves via ERDDAP (CDIP 142 / SF Bar)
+async function getWavesLatestCDIP142() {
+  const vars = "time,sea_surface_wave_significant_height," +
+               "sea_surface_wave_period_at_variance_spectral_density_maximum," +
+               "sea_surface_wave_from_direction";
+  const url = `${ERDDAP_BASE}/tabledap/edu_ucsd_cdip_142.json?${vars}` +
+              "&sea_surface_wave_significant_height>=0&orderByMax(%22time%22)";
+  const r = await fetch(url, { cache: 'no-store' });
+  const data = await r.json();
+  const cols = data?.table?.columnNames || [];
+  const row = (data?.table?.rows || [])[0] || [];
+  const i = n => cols.indexOf(n);
+  return {
+    timeISO: row[i('time')],
+    sigWaveHeightFt: row[i('sea_surface_wave_significant_height')]*3.28084,
+    peakPeriodSec: row[i('sea_surface_wave_period_at_variance_spectral_density_maximum')],
+    meanDirectionDeg: row[i('sea_surface_wave_from_direction')]
+  };
+}
+
+/* ====== RENDERERS ====== */
+function renderWind(json) {
+  const obs = (json?.data||[])[0]||{};
+  document.getElementById('windSpeed').textContent = fmt1(obs.s);
+  document.getElementById('windGust').textContent = `(gust ${fmt1(obs.g)} kt)`;
+  document.getElementById('windDir').textContent = `${fmt0(obs.d)}° ${toCardinal(obs.d)}`;
+  document.getElementById('windTime').textContent = obs.t ? `As of ${tzFmt(obs.t)}` : '';
+}
+function renderTides(json) {
+  const ul = document.getElementById('tidesList'); ul.innerHTML='';
+  const arr = json?.predictions || [];
+  for (const p of arr) {
+    const li = document.createElement('li');
+    li.innerHTML = `<strong>${p.type==='H'?'High':'Low'}</strong> — ${tzFmt(p.t)} — <span class="mono">${(+p.v).toFixed(1)} ft</span>`;
+    ul.appendChild(li);
+  }
+}
+function renderCurrents(data) {
+  const ul = document.getElementById('currentsList'); ul.innerHTML='';
+  const cols = data?.current_predictions?.columns || [];
+  const rows = data?.current_predictions?.data || [];
+  if (!rows.length) { ul.innerHTML='<li>No current events in next 24h</li>'; return; }
+  const iTime=cols.indexOf('Time'), iVel=cols.indexOf('Velocity_kts'), iEvt=cols.indexOf('Event'), iDir=cols.indexOf('Direction_deg');
+  for (const r of rows.slice(0,4)) {
+    const li=document.createElement('li');
+    li.innerHTML = `<strong>${r[iEvt]}</strong> — ${tzFmt(r[iTime])} — <span class="mono">${fmt1(r[iVel])} kt</span> — ${fmt0(r[iDir])}° ${toCardinal(r[iDir])}`;
+    ul.appendChild(li);
+  }
+}
+function renderWaves(w) {
+  document.getElementById('waveHeight').textContent = fmt1(w.sigWaveHeightFt);
+  document.getElementById('wavePeriod').textContent = `${fmt1(w.peakPeriodSec)} s`;
+  document.getElementById('waveDir').textContent = `${fmt0(w.meanDirectionDeg)}° ${toCardinal(w.meanDirectionDeg)}`;
+  document.getElementById('wavesTime').textContent = w.timeISO ? `As of ${tzFmt(w.timeISO)}` : '';
+}
+
+/* ====== CONTROLLER ====== */
+async function refreshAll() {
+  getWindLatest().then(renderWind).catch(()=>{});
+  getTidesToday().then(renderTides).catch(()=>{});
+  getCurrents24h().then(renderCurrents).catch(()=>{ document.getElementById('currentsList').innerHTML='<li>Error loading currents</li>'; });
+  getWavesLatestCDIP142().then(renderWaves).catch(()=>{});
+}
+refreshAll(); setInterval(refreshAll, REFRESH_MS);
+</script>
+</body>
+</html>
