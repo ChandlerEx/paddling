@@ -18,7 +18,7 @@
   @media (max-width:720px){.grid{grid-template-columns:1fr}}
   .card{background:var(--card);border-radius:14px;padding:14px 14px 16px;box-shadow:0 2px 12px rgba(0,0,0,.25);min-height:140px}
   .card h2{margin:0 0 10px;font-size:16px;letter-spacing:.3px;color:var(--accent);display:flex;align-items:center;gap:8px}
-  .icon{width:18px;height:18px;opacity:.9}
+  .icon{width:18px;height:18px;opacity:.9;stroke: currentColor}
   .row{display:flex;gap:14px;flex-wrap:wrap;align-items:baseline}
   .big{font-size:36px;font-weight:700}
   .unit{font-size:14px;color:var(--muted);margin-left:6px}
@@ -49,7 +49,7 @@
     <section class="card" id="windCard">
       <h2>
         <!-- wind icon -->
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
           <path stroke-width="2" stroke-linecap="round" d="M3 8h10a3 3 0 1 0-3-3"/>
           <path stroke-width="2" stroke-linecap="round" d="M3 12h14a3 3 0 1 1-3 3"/>
           <path stroke-width="2" stroke-linecap="round" d="M3 16h6"/>
@@ -68,7 +68,7 @@
     <section class="card" id="wavesCard">
       <h2>
         <!-- waves icon -->
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
           <path stroke-width="2" d="M3 16c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2"/>
           <path stroke-width="2" d="M3 12c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2"/>
         </svg>
@@ -86,7 +86,7 @@
     <section class="card" id="tidesCard">
       <h2>
         <!-- tide gauge icon -->
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
           <rect x="5" y="3" width="14" height="18" rx="2" stroke-width="2"/>
           <path stroke-width="2" d="M7 8h10M7 12h10M7 16h10"/>
         </svg>
@@ -100,7 +100,7 @@
     <section class="card" id="currentsCard">
       <h2>
         <!-- current/arrow icon -->
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
           <path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M5 12h10"/>
           <path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 5l7 7-7 7"/>
         </svg>
@@ -143,9 +143,11 @@ const setClock = () => {
 setInterval(setClock, 1000); setClock();
 
 /* ====== STATION LINKS (maps/info) ====== */
-document.getElementById('windMap').href    = `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
-document.getElementById('tideMap').href    = `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
+document.getElementById('windMap').href      = `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
+document.getElementById('tideMap').href      = `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
 document.getElementById('currentsInfo').href = `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/stations/${encodeURIComponent(CURRENTS_STATION)}/details.html`;
+// Waves map default (always present, even before ERDDAP returns)
+document.getElementById('wavesMap').href     = "https://www.ndbc.noaa.gov/station_page.php?station=46237";
 
 /* ====== FETCHERS ====== */
 // Tides (today hilo)
@@ -245,7 +247,11 @@ function renderCurrents_DataAPI(data) {
 function renderCurrents_DPAPI(data) {
   const ul = document.getElementById('currentsList'); ul.innerHTML='';
   const events = data?.currentPredictions || data?.predictions || data?.events || data?.data || [];
-  if (!events.length){ ul.innerHTML='<li>No current events in next 24h</li>'; return; }
+  if (!events.length){
+    ul.innerHTML='<li>No current events in next 24h</li>';
+    document.getElementById('currentsStatus').textContent='Try a different currents station.';
+    return;
+  }
   for (const ev of events.slice(0,4)) {
     const kind = (ev?.eventType || ev?.type || 'Event').replace(/_/g,' ');
     const when = tzFmt(ev?.time || ev?.t || ev?.dateTime);
@@ -262,7 +268,7 @@ function renderWaves(w) {
   document.getElementById('wavePeriod').textContent = `${fmt1(w.peakPeriodSec)} s`;
   document.getElementById('waveDir').textContent    = `${fmt0(w.meanDirectionDeg)}° ${toCardinal(w.meanDirectionDeg)}`;
   document.getElementById('wavesTime').textContent  = w.timeISO ? `As of ${tzFmt(w.timeISO)}` : '';
-  // set map link (OSM) centered on buoy lat/lon
+  // upgrade map link to an OSM pin when lat/lon are available
   if (w.lat!=null && w.lon!=null) {
     const z=11;
     document.getElementById('wavesMap').href = `https://www.openstreetmap.org/?mlat=${w.lat}&mlon=${w.lon}#map=${z}/${w.lat}/${w.lon}`;
@@ -283,9 +289,9 @@ async function refreshAll() {
       const ok = renderCurrents_DataAPI(d);
       if (!ok) return getCurrents24h_DPAPI().then(renderCurrents_DPAPI);
     })
-    .catch(() => getCurrents24h_DPAPI().then(renderCurrents_DPAPI).catch(()=>{
+    .catch(() => getCurrents24h_DPAPI().then(renderCurrents_DPAPI).catch((e)=>{
       document.getElementById('currentsList').innerHTML='<li>Error loading currents</li>';
-      document.getElementById('currentsStatus').textContent='Try a different currents station.';
+      document.getElementById('currentsStatus').textContent='No response from either API for this station.';
     }));
 
   // Waves
@@ -296,10 +302,6 @@ async function refreshAll() {
 
 refreshAll();
 setInterval(refreshAll, REFRESH_MS);
-
-/* Show station set in header and wire Waves/NOAA map defaults */
-document.getElementById('windMap').href = `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
-document.getElementById('tideMap').href = `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
 </script>
 </body>
 </html>
