@@ -382,8 +382,8 @@ async function getNoaaStationMetaLatLon(stationId) {
 // Currents station meta (best-effort)
 async function getCurrentsStationLatLon(currentsId) {
   const urls = [
-    `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/stations/${encodeURIComponent(currentsId)}.json`,
     `https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/${encodeURIComponent(currentsId)}.json`
+    `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/stations/${encodeURIComponent(currentsId)}.json`,
   ];
   for (const u of urls) {
     try {
@@ -468,15 +468,22 @@ async function refreshAll() {
   getWindLatest().then(renderWind).catch(()=>{ document.getElementById('windTime').textContent='Wind unavailable'; });
   getTidesToday().then(renderTides).catch(()=>{ document.getElementById('tidesList').innerHTML='<li>Error loading tides</li>'; });
 
-  getCurrents24h_DataAPI()
-    .then(d => {
+  // Currents — Data API only (CORS-safe)
+  (async () => {
+    try {
+      const resolved = CURRENTS_STATION; // e.g. "SFB1201_20" (split inside the fetcher)
+      const d = await getCurrentsNext24_DataAPI(resolved);
       const ok = renderCurrents_DataAPI(d);
-      if (!ok) return getCurrents24h_DPAPI().then(renderCurrents_DPAPI);
-    })
-    .catch(() => getCurrents24h_DPAPI().then(renderCurrents_DPAPI).catch((e)=>{
-      document.getElementById('currentsList').innerHTML='<li>Error loading currents</li>';
-      document.getElementById('currentsStatus').textContent='No response from either API for this station.';
-    }));
+      if (!ok) {
+        document.getElementById('currentsList').innerHTML = '<li>No current events in next 24h</li>';
+        document.getElementById('currentsStatus').textContent = '';
+      }
+    } catch (e) {
+      document.getElementById('currentsList').innerHTML = '<li>Error loading currents</li>';
+      document.getElementById('currentsStatus').textContent = 'Currents API error (see console).';
+      console.error(e);
+    }
+  })();
 
   getWavesLatestCDIP142().then(renderWaves).catch(()=>{
     document.getElementById('wavesTime').textContent='Waves unavailable';
