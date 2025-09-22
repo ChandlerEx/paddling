@@ -19,7 +19,7 @@
   .card{background:var(--card);border-radius:14px;padding:14px 14px 16px;box-shadow:0 2px 12px rgba(0,0,0,.25);min-height:140px}
   .card h2{margin:0 0 10px;font-size:16px;letter-spacing:.3px;color:var(--accent);display:flex;align-items:center;gap:8px}
   .icon{width:18px;height:18px;opacity:.9;display:inline-block}
-  .icon *{stroke: currentColor; fill: none}
+  .icon path,.icon rect,.icon circle,.icon line,.icon polyline,.icon polygon{stroke:currentColor;fill:none}
   .row{display:flex;gap:14px;flex-wrap:wrap;align-items:baseline}
   .big{font-size:36px;font-weight:700}
   .unit{font-size:14px;color:var(--muted);margin-left:6px}
@@ -34,7 +34,20 @@
   .links{margin-left:auto;font-size:12px}
   .links a{color:var(--muted);text-decoration:none}
   .links a:hover{text-decoration:underline}
+  .fullwidth{grid-column:1 / -1}
+  .leaflet-container{ background:#0b1220; }
 </style>
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+  crossorigin=""
+/>
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+  crossorigin=""
+></script>
 </head>
 <body>
 <div class="wrap">
@@ -50,7 +63,7 @@
     <section class="card" id="windCard">
       <h2>
         <!-- wind icon -->
-        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke="currentColor" fill="none">
           <path stroke-width="2" stroke-linecap="round" d="M3 8h10a3 3 0 1 0-3-3"/>
           <path stroke-width="2" stroke-linecap="round" d="M3 12h14a3 3 0 1 1-3 3"/>
           <path stroke-width="2" stroke-linecap="round" d="M3 16h6"/>
@@ -69,7 +82,7 @@
     <section class="card" id="wavesCard">
       <h2>
         <!-- waves icon -->
-        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke="currentColor" fill="none">
           <path stroke-width="2" d="M3 16c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2"/>
           <path stroke-width="2" d="M3 12c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2"/>
         </svg>
@@ -87,7 +100,7 @@
     <section class="card" id="tidesCard">
       <h2>
         <!-- tide gauge icon -->
-        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke="currentColor" fill="none">
           <rect x="5" y="3" width="14" height="18" rx="2" stroke-width="2"/>
           <path stroke-width="2" d="M7 8h10M7 12h10M7 16h10"/>
         </svg>
@@ -101,7 +114,7 @@
     <section class="card" id="currentsCard">
       <h2>
         <!-- current/arrow icon -->
-        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke="currentColor" fill="none">
           <path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M5 12h10"/>
           <path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 5l7 7-7 7"/>
         </svg>
@@ -110,6 +123,12 @@
       </h2>
       <ul class="list" id="currentsList"><li>Loading…</li></ul>
       <div class="status small" id="currentsStatus"></div>
+    </section>
+
+    <section class="card fullwidth" id="mapCard">
+      <h2>Station Map</h2>
+      <div id="map" style="height:360px;border-radius:12px;overflow:hidden;"></div>
+      <div class="status small" id="mapStatus"></div>
     </section>
   </div>
 </div>
@@ -125,6 +144,12 @@ document.getElementById('stationsPill').textContent =
   `Tide/Wind:${NOAA_TIDE_WIND_STATION} • Waves:CDIP142 • Currents:${CURRENTS_STATION}`;
 
 /* ====== HELPERS ====== */
+// "SFB1201_20" -> { base:"SFB1201", bin:20 }
+function splitStationBin(id) {
+  const [base, binStr] = String(id).split('_');
+  const bin = binStr != null ? Number(binStr) : null;
+  return { base, bin: Number.isFinite(bin) ? bin : null };
+}
 const toCardinal = deg => {
   if (deg == null || isNaN(deg)) return "—";
   const dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
@@ -175,18 +200,38 @@ function fmtDateForNOAA(d) {
   const dd = String(d.getDate()).padStart(2,'0'); const HH = String(d.getHours()).padStart(2,'0');
   const MM = String(d.getMinutes()).padStart(2,'0'); return `${yyyy}${mm}${dd}%20${HH}:${MM}`;
 }
-async function getCurrents24h_DataAPI() {
-  const now = new Date(); const end = new Date(now.getTime()+24*60*60*1000);
-  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?product=currents_predictions` +
-    `&station=${CURRENTS_STATION}&interval=max_slack&time_zone=lst_ldt&units=english&format=json` +
-    `&begin_date=${fmtDateForNOAA(now)}&end_date=${fmtDateForNOAA(end)}`;
-  const r = await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error('currents_dataapi');
+async function getCurrents24h_DataAPI(stationIdOrBasePlusBin) {
+  const now = new Date();
+  const end = new Date(now.getTime() + 24*60*60*1000);
+  const { base, bin } = splitStationBin(stationIdOrBasePlusBin);
+
+  // Data API wants station=<BASE> and bin=<N>
+  const params = new URLSearchParams({
+    product: 'currents_predictions',
+    station: base,
+    interval: 'max_slack',
+    time_zone: 'lst_ldt',
+    units: 'english',
+    format: 'json',
+    begin_date: fmtDateForNOAA(now),
+    end_date: fmtDateForNOAA(end)
+  });
+  if (bin != null) params.set('bin', String(bin));
+
+  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?${params.toString()}`;
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error('currents_dataapi');
   return r.json();
 }
-async function getCurrents24h_DPAPI() {
+async function getCurrents24h_DPAPI(stationIdOrBasePlusBin) {
+  // DPAPI takes "SFB1201_20" as the station string
+  const { base, bin } = splitStationBin(stationIdOrBasePlusBin);
+  const combined = bin != null ? `${base}_${bin}` : base;
+
   const url = `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/currentPredictions?` +
-    `station=${CURRENTS_STATION}&range=24&units=1&time_zone=LST_LDT&format=json`;
-  const r = await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error('currents_dpapi');
+              `station=${encodeURIComponent(combined)}&range=24&units=1&time_zone=LST_LDT&format=json`;
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error('currents_dpapi');
   return r.json();
 }
 
@@ -273,18 +318,151 @@ function renderWaves(w) {
   if (w.lat!=null && w.lon!=null) {
     const z=11;
     document.getElementById('wavesMap').href = `https://www.openstreetmap.org/?mlat=${w.lat}&mlon=${w.lon}#map=${z}/${w.lat}/${w.lon}`;
+    addMarker(w.lat, w.lon, 'CDIP 142 (Waves)', document.getElementById('wavesMap').href);
   }
+}
+
+// ===== MAP =====
+let map, markersLayer, bounds;
+
+function ensureMap() {
+  if (map) return map;
+  map = L.map('map', { scrollWheelZoom: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18, attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+  markersLayer = L.layerGroup().addTo(map);
+  bounds = L.latLngBounds();
+  return map;
+}
+
+function addMarker(lat, lon, label, linkHref) {
+  if (lat == null || lon == null) return;
+  ensureMap();
+  const opts = {};
+  const m = L.marker([lat, lon], opts).addTo(markersLayer);
+  const inner = linkHref ? `<a href="${linkHref}" target="_blank" rel="noopener">${label}</a>` : label;
+  m.bindPopup(inner);
+  bounds.extend([lat, lon]);
+}
+
+function fitMarkers() {
+  if (!map || !bounds || !bounds.isValid()) return;
+  map.fitBounds(bounds.pad(0.2));
+}
+
+// NOAA station meta (tide/wind) — robust to small format differences
+async function getNoaaStationMetaLatLon(stationId) {
+  // try mdapi first
+  const urls = [
+    `https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/${stationId}.json`,
+    // fallback: a simplified stations endpoint some deployments expose
+    `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/stations/${stationId}.json`
+  ];
+  for (const u of urls) {
+    try {
+      const r = await fetch(u, { cache: 'no-store' });
+      if (!r.ok) continue;
+      const j = await r.json();
+      // Try a few likely shapes:
+      const s = j?.stations?.[0] || j?.station || j?.data || j;
+      const lat = parseFloat(s?.lat || s?.latitude);
+      const lon = parseFloat(s?.lng || s?.lon || s?.longitude);
+      if (isFinite(lat) && isFinite(lon)) return { lat, lon };
+    } catch {}
+  }
+  return {};
+}
+
+// Currents station meta (best-effort)
+async function getCurrentsStationLatLon(currentsId) {
+  const urls = [
+    `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/stations/${encodeURIComponent(currentsId)}.json`,
+    `https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/${encodeURIComponent(currentsId)}.json`
+  ];
+  for (const u of urls) {
+    try {
+      const r = await fetch(u, { cache: 'no-store' });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const s = j?.stations?.[0] || j?.station || j?.data || j;
+      const lat = parseFloat(s?.lat || s?.latitude);
+      const lon = parseFloat(s?.lng || s?.lon || s?.longitude);
+      if (isFinite(lat) && isFinite(lon)) return { lat, lon };
+    } catch {}
+  }
+  return {};
+}
+
+// --- Currents station resolver ---
+let RESOLVED_CURR_BIN = null; // e.g. "SFB1201_14"
+const currentsBaseFrom = id => String(id).split('_')[0];
+
+async function fetchBinsForCurrents(baseId) {
+  const urls = [
+    // DPAPI variant
+    `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/stations/${encodeURIComponent(baseId)}/bins.json`,
+    // MDAPI variant
+    `https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/${encodeURIComponent(baseId)}/bins.json`
+  ];
+  for (const u of urls) {
+    try {
+      const r = await fetch(u, { cache: 'no-store' });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const bins = j?.bins || j?.data || j?.station?.bins || [];
+      if (Array.isArray(bins) && bins.length) return bins;
+    } catch { /* try next */ }
+  }
+  return [];
+}
+
+/**
+ * Choose an "active-looking" bin:
+ *  - prefer bins with a truthy 'active' (or 'isActive') or status "Active"
+ *  - otherwise pick a mid-depth bin (median) as a sane default
+ */
+function pickBestBin(bins) {
+  const norm = b => ({
+    num: Number(b?.bin || b?.bin_number || b?.number || b?.id),
+    active: (b?.active ?? b?.isActive ?? /active/i.test(String(b?.status || ''))) ? true : false,
+    depth: Number(b?.depth || b?.binDepth || b?.centerDepth)
+  });
+  const cleaned = bins.map(norm).filter(b => Number.isFinite(b.num));
+  if (!cleaned.length) return null;
+  const actives = cleaned.filter(b => b.active);
+  if (actives.length) {
+    // choose the shallowest active (typical “surface” bin)
+    return actives.sort((a,b)=> (a.depth??Infinity) - (b.depth??Infinity))[0].num;
+  }
+  // fallback: pick median bin number
+  const sorted = cleaned.map(b=>b.num).sort((a,b)=>a-b);
+  return sorted[Math.floor(sorted.length/2)];
+}
+
+async function resolveCurrentsBinId(originalId) {
+  if (RESOLVED_CURR_BIN) return RESOLVED_CURR_BIN;
+  const base = currentsBaseFrom(originalId);
+  const bins = await fetchBinsForCurrents(base);
+  const chosen = pickBestBin(bins);
+  const finalId = chosen ? `${base}_${chosen}` : originalId; // fallback to what you set
+  RESOLVED_CURR_BIN = finalId;
+
+  // update UI targets to reflect the resolved bin
+  document.getElementById('currentsInfo').href =
+    `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/stations/${encodeURIComponent(finalId)}/details.html`;
+  document.getElementById('stationsPill').textContent =
+    `Tide/Wind:${NOAA_TIDE_WIND_STATION} • Waves:CDIP142 • Currents:${finalId}`;
+
+  return finalId;
 }
 
 /* ====== CONTROLLER ====== */
 async function refreshAll() {
-  // Wind
+  // existing calls…
   getWindLatest().then(renderWind).catch(()=>{ document.getElementById('windTime').textContent='Wind unavailable'; });
-
-  // Tides
   getTidesToday().then(renderTides).catch(()=>{ document.getElementById('tidesList').innerHTML='<li>Error loading tides</li>'; });
 
-  // Currents – try Data API, fallback to DPAPI automatically
   getCurrents24h_DataAPI()
     .then(d => {
       const ok = renderCurrents_DataAPI(d);
@@ -295,10 +473,47 @@ async function refreshAll() {
       document.getElementById('currentsStatus').textContent='No response from either API for this station.';
     }));
 
-  // Waves
   getWavesLatestCDIP142().then(renderWaves).catch(()=>{
     document.getElementById('wavesTime').textContent='Waves unavailable';
   });
+
+  // ---- MAP MARKERS (run in parallel; safe if some fail) ----
+  (async () => {
+    document.getElementById('mapStatus').textContent = 'Loading station locations…';
+    // Tide/Wind station (same NOAA id)
+    try {
+      const meta = await getNoaaStationMetaLatLon(NOAA_TIDE_WIND_STATION);
+      if (meta.lat!=null && meta.lon!=null) {
+        addMarker(meta.lat, meta.lon, `NOAA ${NOAA_TIDE_WIND_STATION} (Tide/Wind)`,
+          document.getElementById('tideMap').href);
+      }
+    } catch {}
+    // Currents — resolve a valid bin, then try Data API (base+bin), fallback to DPAPI (combined)
+    (async () => {
+      try {
+        const resolved = await resolveCurrentsBinId(CURRENTS_STATION);
+        const d = await getCurrents24h_DataAPI(resolved);
+        const ok = renderCurrents_DataAPI(d);
+        if (!ok) {
+          const d2 = await getCurrents24h_DPAPI(resolved);
+          renderCurrents_DPAPI(d2);
+        }
+      } catch {
+        try {
+          const resolved = await resolveCurrentsBinId(CURRENTS_STATION);
+          const d2 = await getCurrents24h_DPAPI(resolved);
+          renderCurrents_DPAPI(d2);
+        } catch {
+          document.getElementById('currentsList').innerHTML = '<li>Error loading currents</li>';
+          document.getElementById('currentsStatus').textContent =
+            'No response from either API for this station/bin.';
+        }
+      }
+    })();
+    // Fit map to whatever we have (including waves marker added earlier)
+    fitMarkers();
+    document.getElementById('mapStatus').textContent = '';
+  })();
 }
 
 refreshAll();
