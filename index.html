@@ -140,6 +140,7 @@ const NOAA_TIDE_WIND_STATION = "9414750";     // Alameda
 const CURRENTS_STATION       = "SFB1201_20";  // Entrance Outside (can change later)
 const ERDDAP_BASE            = "https://erddap.cencoos.org/erddap";
 const REFRESH_MS             = 5 * 60 * 1000; // 5 minutes
+const PROXY_BASE = "https://noaa-currents-proxy.chandler12.workers.dev";  // <-- your Worker URL
 
 document.getElementById('stationsPill').textContent =
   `Tide/Wind:${NOAA_TIDE_WIND_STATION} • Waves:CDIP142 • Currents:${CURRENTS_STATION}`;
@@ -152,26 +153,19 @@ function splitStationBin(id) {
 }
 
 // Try a few bins; return the first that yields rows
-async function probeCurrentsBin(base, candidates = [14, 20, 10, 5, 30]) {
+// Try a few bins via the proxy; return the first that yields rows
+async function probeCurrentsBin(base, candidates = [20, 14, 10, 5, 30]) {
   for (const bin of candidates) {
-    const params = new URLSearchParams({
-      product: 'currents_predictions',
-      station: base,
-      bin: String(bin),
-      range: '24',              // <— match the main fetcher
-      time_zone: 'lst_ldt',
-      units: 'english',
-      format: 'json',
-      application: 'encinal-dashboard'
-    });
-    const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?${params}`;
+    const station = `${base}_${bin}`;
     try {
-      const r = await fetch(url, { cache:'no-store' });
+      const r = await fetch(`${PROXY_BASE}?station=${encodeURIComponent(station)}`, { cache: "no-store" });
       if (!r.ok) continue;
       const j = await r.json();
       const rows = j?.current_predictions?.data || [];
-      if (rows.length) return { id: `${base}_${bin}`, data: j };
-    } catch { /* try next */ }
+      if (rows.length) return { id: station, data: j };
+    } catch {
+      // try next bin
+    }
   }
   return null;
 }
@@ -240,28 +234,13 @@ function fmtDateForNOAA(d){
   return `${yyyy}${mm}${dd} ${HH}:${MM}`;
 }
 
-// Currents (next 24h) via CO-OPS datagetter — time-series (no interval=max_slack)
-async function getCurrentsNext24_DataAPI(stationIdOrCombined){
-  const { base, bin } = splitStationBin(stationIdOrCombined);
-
-  const params = new URLSearchParams({
-    product: 'currents_predictions',
-    station: base,
-    range: '24',                // <— simple, avoids date-encoding issues
-    time_zone: 'lst_ldt',
-    units: 'english',
-    format: 'json',
-    application: 'encinal-dashboard'
-  });
-  if (bin != null) params.set('bin', String(bin));
-
-  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?${params}`;
-  console.log('Currents URL:', url);
-  const r = await fetch(url, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`currents_dataapi ${r.status}`);
-  const j = await r.json();
-  if (j?.error) throw new Error(j.error?.message || 'Currents API error');
-  return j;
+// Currents (next 24h) via CO-OPS datagetter — let API choose nearest-surface bin
+async function getCurrentsNext24_DataAPI(stationIdOrCombined) {
+  const url = `${PROXY_BASE}?station=${encodeURIComponent(stationIdOrCombined)}`;
+  const r = await fetch(url, { cache: "no-store" });
+  const txt = await r.text();
+  if (!r.ok) throw new Error(`proxy ${r.status} ${txt}`);
+  return JSON.parse(txt); // datagetter JSON
 }
 
 // Waves via ERDDAP (CDIP 142 / SF Bar) – also fetch latitude/longitude for Map link
@@ -306,77 +285,35 @@ function renderTides(json) {
   }
 }
 
-function renderCurrents_DataAPI(data){
+// Render DPAPI/“currentPredictions” events
+function renderCurrents_DataAPI(data) {
   const ul = document.getElementById('currentsList');
   ul.innerHTML = '';
 
-  const block = data?.current_predictions;
-  const cols = block?.columns || [];
-  const rows = block?.data || [];
-  if (!rows.length) return false;
+  // DPAPI returns events; handle a few name variants defensively
+  const events = data?.currentPredictions || data?.predictions || data?.events || data?.data || [];
+  if (!events.length) return false;
 
-  const idx = (names)=> names.map(n=>cols.indexOf(n)).find(i=>i>=0);
-  const iTime = idx(['Time','time']);
-  const iVel  = idx(['Velocity_kts','Velocity','Speed']);   // kts
-  const iDir  = idx(['Direction_deg','Direction']);         // degrees
-  const iEvt  = idx(['Event','event']);                     // may not exist in time-series
+  for (const ev of events.slice(0, 4)) {
+    const kind = (ev.eventType || ev.type || 'Event').replace(/_/g, ' ');
+    const when = tzFmt(ev.time || ev.t || ev.dateTime);
+    const vel  = ev.velocity ?? ev.speed;
+    const dir  = ev.direction;
 
-  // If 'Event' exists, render directly
-  if (iEvt != null){
-    for (const r of rows.slice(0,4)){
-      const when = r[iTime], vel = r[iVel], dir = r[iDir], evt = r[iEvt];
-      const li = document.createElement('li');
-      li.innerHTML =
-        `<strong>${evt}</strong> — ${tzFmt(when)} — ` +
-        `<span class="mono">${fmt1(vel)} kt</span>` +
-        ` — ${dir!=null ? `${fmt0(dir)}° ${toCardinal(dir)}` : '—'}`;
-      ul.appendChild(li);
-    }
-    document.getElementById('currentsStatus').textContent = '';
-    return true;
-  }
-
-  // Otherwise: derive events from time-series
-  //  - maxima: local peaks
-  //  - slacks: local minima near zero (<= 0.2 kt)
-  const ts = rows.map(r => ({
-    t: r[iTime],
-    v: Number(r[iVel]),
-    d: r[iDir] != null ? Number(r[iDir]) : null,
-  })).filter(x => Number.isFinite(x.v));
-
-  const events = [];
-  const nearZero = v => Math.abs(v) <= 0.2;
-
-  for (let i = 1; i < ts.length - 1; i++){
-    const prev = ts[i-1], cur = ts[i], next = ts[i+1];
-    // local max
-    if (cur.v >= prev.v && cur.v > next.v){
-      events.push({ type: 'Max current', t: cur.t, v: cur.v, d: cur.d });
-    }
-    // local min near zero -> slack
-    if (cur.v <= prev.v && cur.v < next.v && nearZero(cur.v)){
-      events.push({ type: 'Slack', t: cur.t, v: cur.v, d: cur.d });
-    }
-  }
-
-  // Sort by time and take the first four
-  events.sort((a,b) => new Date(a.t) - new Date(b.t));
-  const top = events.slice(0,4);
-
-  if (!top.length) return false;
-
-  for (const ev of top){
     const li = document.createElement('li');
     li.innerHTML =
-      `<strong>${ev.type}</strong> — ${tzFmt(ev.t)} — ` +
-      `<span class="mono">${fmt1(ev.v)} kt</span>` +
-      ` — ${ev.d!=null ? `${fmt0(ev.d)}° ${toCardinal(ev.d)}` : '—'}`;
+      `<strong>${kind}</strong> — ${tzFmt(when)} — ` +
+      `<span class="mono">${fmt1(vel)} kt</span>` +
+      ` — ${dir != null ? `${fmt0(dir)}° ${toCardinal(dir)}` : '—'}`;
     ul.appendChild(li);
   }
+
   document.getElementById('currentsStatus').textContent = '';
   return true;
 }
+
+// make old/new names both work
+const renderCurrentsFromDPAPI = renderCurrents_DataAPI;
 
 function renderWaves(w) {
   document.getElementById('waveHeight').textContent = fmt1(w.sigWaveHeightFt);
@@ -472,7 +409,7 @@ async function refreshAll() {
     try {
       let resolved = CURRENTS_STATION;                 // e.g., "SFB1201_20"
       let data = await getCurrentsNext24_DataAPI(resolved);
-      let ok = renderCurrents_DataAPI(data);
+      let ok = renderCurrentsFromDPAPI(data);
 
       if (!ok) {
         const { base } = splitStationBin(resolved);
@@ -481,7 +418,7 @@ async function refreshAll() {
         if (found) {
           resolved = found.id;                         // e.g., "SFB1201_14"
           data = found.data;
-          ok = renderCurrents_DataAPI(data);
+          let ok = renderCurrentsFromDPAPI(data);
           document.getElementById('stationsPill').textContent =
             `Tide/Wind:${NOAA_TIDE_WIND_STATION} • Waves:CDIP142 • Currents:${resolved}`;
         }
