@@ -144,6 +144,13 @@ document.getElementById('stationsPill').textContent =
   `Tide/Wind:${NOAA_TIDE_WIND_STATION} • Waves:CDIP142 • Currents:${CURRENTS_STATION}`;
 
 /* ====== HELPERS ====== */
+function splitStationBin(id) {
+  const [base, binStr] = String(id).split('_');
+  const bin = binStr != null ? Number(binStr) : null;
+  return { base, bin: Number.isFinite(bin) ? bin : null };
+}
+function showCurrStatus(msg){ document.getElementById('currentsStatus').textContent = msg; }
+
 // "SFB1201_20" -> { base:"SFB1201", bin:20 }
 function splitStationBin(id) {
   const [base, binStr] = String(id).split('_');
@@ -200,40 +207,51 @@ function fmtDateForNOAA(d) {
   const dd = String(d.getDate()).padStart(2,'0'); const HH = String(d.getHours()).padStart(2,'0');
   const MM = String(d.getMinutes()).padStart(2,'0'); return `${yyyy}${mm}${dd}%20${HH}:${MM}`;
 }
-async function getCurrents24h_DataAPI(stationIdOrBasePlusBin) {
+
+// Data API: station=<BASE>&bin=<N>
+async function getCurrents24h_DataAPI(stationIdOrCombined) {
+  const { base, bin } = splitStationBin(stationIdOrCombined);
   const now = new Date();
   const end = new Date(now.getTime() + 24*60*60*1000);
-  const { base, bin } = splitStationBin(stationIdOrBasePlusBin);
 
-  // Data API wants station=<BASE> and bin=<N>
   const params = new URLSearchParams({
     product: 'currents_predictions',
     station: base,
-    interval: 'max_slack',
     time_zone: 'lst_ldt',
     units: 'english',
     format: 'json',
+    interval: 'max_slack',
     begin_date: fmtDateForNOAA(now),
-    end_date: fmtDateForNOAA(end)
+    end_date: fmtDateForNOAA(end),
   });
   if (bin != null) params.set('bin', String(bin));
 
-  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?${params.toString()}`;
+  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?${params}`;
+  showCurrStatus('Fetching Data API…');  // ← you asked where this goes: right before fetch
   const r = await fetch(url, { cache: 'no-store' });
-  if (!r.ok) throw new Error('currents_dataapi');
+  if (!r.ok) throw new Error('currents_dataapi ' + r.status);
   return r.json();
 }
-async function getCurrents24h_DPAPI(stationIdOrBasePlusBin) {
-  // DPAPI takes "SFB1201_20" as the station string
-  const { base, bin } = splitStationBin(stationIdOrBasePlusBin);
-  const combined = bin != null ? `${base}_${bin}` : base;
 
-  const url = `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/currentPredictions?` +
-              `station=${encodeURIComponent(combined)}&range=24&units=1&time_zone=LST_LDT&format=json`;
+// DPAPI: station=<BASE>&bin=<N>  (NOT the combined form)
+async function getCurrents24h_DPAPI(stationIdOrCombined) {
+  const { base, bin } = splitStationBin(stationIdOrCombined);
+  const params = new URLSearchParams({
+    station: base,
+    range: '24',
+    units: '1',           // knots
+    time_zone: 'LST_LDT',
+    format: 'json',
+  });
+  if (bin != null) params.set('bin', String(bin));
+
+  const url = `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/currentPredictions?${params}`;
+  showCurrStatus('Fetching DPAPI…');     // ← and here
   const r = await fetch(url, { cache: 'no-store' });
-  if (!r.ok) throw new Error('currents_dpapi');
+  if (!r.ok) throw new Error('currents_dpapi ' + r.status);
   return r.json();
 }
+
 
 // Waves via ERDDAP (CDIP 142 / SF Bar) – also fetch latitude/longitude for Map link
 async function getWavesLatestCDIP142() {
@@ -488,28 +506,31 @@ async function refreshAll() {
           document.getElementById('tideMap').href);
       }
     } catch {}
-    // Currents — resolve a valid bin, then try Data API (base+bin), fallback to DPAPI (combined)
+    // Currents — resolve a valid bin, then try Data API (base+bin), fallback to DPAPI (base+bin)
     (async () => {
       try {
-        const resolved = await resolveCurrentsBinId(CURRENTS_STATION);
+        const resolved = await resolveCurrentsBinId(CURRENTS_STATION);  // returns e.g. "SFB1201_14" or your original if bins fail
         const d = await getCurrents24h_DataAPI(resolved);
         const ok = renderCurrents_DataAPI(d);
         if (!ok) {
           const d2 = await getCurrents24h_DPAPI(resolved);
           renderCurrents_DPAPI(d2);
         }
-      } catch {
+        showCurrStatus('');
+      } catch (e) {
         try {
           const resolved = await resolveCurrentsBinId(CURRENTS_STATION);
           const d2 = await getCurrents24h_DPAPI(resolved);
           renderCurrents_DPAPI(d2);
-        } catch {
+          showCurrStatus('');
+        } catch (e2) {
           document.getElementById('currentsList').innerHTML = '<li>Error loading currents</li>';
-          document.getElementById('currentsStatus').textContent =
-            'No response from either API for this station/bin.';
+          showCurrStatus('No response from either API for this station/bin.');
+          console.error('Currents error:', e, e2);
         }
       }
     })();
+
     // Fit map to whatever we have (including waves marker added earlier)
     fitMarkers();
     document.getElementById('mapStatus').textContent = '';
