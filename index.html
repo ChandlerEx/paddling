@@ -150,25 +150,23 @@ function splitStationBin(id) {
   const bin = binStr != null ? Number(binStr) : null;
   return { base, bin: Number.isFinite(bin) ? bin : null };
 }
-function showCurrStatus(msg){ document.getElementById('currentsStatus').textContent = msg; }
-
-// "SFB1201_20" -> { base:"SFB1201", bin:20 }
-function splitStationBin(id) {
-  const [base, binStr] = String(id).split('_');
-  const bin = binStr != null ? Number(binStr) : null;
-  return { base, bin: Number.isFinite(bin) ? bin : null };
+// Optional; keep only if you use it to show loading text
+function showCurrStatus(msg) {
+  document.getElementById('currentsStatus').textContent = msg;
 }
+
 const toCardinal = deg => {
   if (deg == null || isNaN(deg)) return "—";
   const dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
   return dirs[Math.round(((deg % 360)+360)%360 / 22.5) % 16];
 };
-const ft = m => m * 3.28084;
+const ft   = m => m * 3.28084;
 const fmt1 = n => n == null || isNaN(+n) ? "—" : (+n).toFixed(1);
 const fmt0 = n => n == null || isNaN(+n) ? "—" : Math.round(+n);
 const tzFmt = iso => { try { return new Date(iso).toLocaleString(); } catch { return iso || "—"; } };
 const todayYYYYMMDD = () => {
-  const d = new Date(); return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
 };
 const setClock = () => {
   document.getElementById('clock').textContent =
@@ -177,11 +175,15 @@ const setClock = () => {
 setInterval(setClock, 1000); setClock();
 
 /* ====== STATION LINKS (maps/info) ====== */
-document.getElementById('windMap').href      = `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
-document.getElementById('tideMap').href      = `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
-document.getElementById('currentsInfo').href = `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/stations/${encodeURIComponent(CURRENTS_STATION)}/details.html`;
+document.getElementById('windMap').href  =
+  `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
+document.getElementById('tideMap').href  =
+  `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
+document.getElementById('currentsInfo').href =
+  `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/stations/${encodeURIComponent(CURRENTS_STATION)}/details.html`; // just a link; CORS doesn't apply
 // Waves map default (always present, even before ERDDAP returns)
-document.getElementById('wavesMap').href     = "https://www.ndbc.noaa.gov/station_page.php?station=46237";
+document.getElementById('wavesMap').href =
+  "https://www.ndbc.noaa.gov/station_page.php?station=46237";
 
 /* ====== FETCHERS ====== */
 // Tides (today hilo)
@@ -200,17 +202,6 @@ async function getWindLatest() {
     `product=wind&time_zone=lst_ldt&units=english&format=json&station=${NOAA_TIDE_WIND_STATION}&date=latest`;
   const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error('wind'); return r.json();
-}
-
-// Currents (try Data API max_slack; if empty, fallback to DPAPI predictions)
-function fmtDateForNOAA(d) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth()+1).padStart(2,'0');
-  const dd = String(d.getDate()).padStart(2,'0');
-  const HH = String(d.getHours()).padStart(2,'0');
-  const MM = String(d.getMinutes()).padStart(2,'0');
-  // IMPORTANT: return a literal space; URLSearchParams will encode it once.
-  return `${yyyy}${mm}${dd} ${HH}:${MM}`;
 }
 
 // Data API: station=<BASE>&bin=<N>
@@ -464,14 +455,20 @@ async function resolveCurrentsBinId(originalId) {
 
 /* ====== CONTROLLER ====== */
 async function refreshAll() {
-  // existing calls…
-  getWindLatest().then(renderWind).catch(()=>{ document.getElementById('windTime').textContent='Wind unavailable'; });
-  getTidesToday().then(renderTides).catch(()=>{ document.getElementById('tidesList').innerHTML='<li>Error loading tides</li>'; });
+  // Wind
+  getWindLatest()
+    .then(renderWind)
+    .catch(() => { document.getElementById('windTime').textContent = 'Wind unavailable'; });
+
+  // Tides
+  getTidesToday()
+    .then(renderTides)
+    .catch(() => { document.getElementById('tidesList').innerHTML = '<li>Error loading tides</li>'; });
 
   // Currents — Data API only (CORS-safe)
   (async () => {
     try {
-      const resolved = CURRENTS_STATION; // e.g. "SFB1201_20" (split inside the fetcher)
+      const resolved = CURRENTS_STATION; // e.g., "SFB1201_20" (split inside fetcher)
       const d = await getCurrentsNext24_DataAPI(resolved);
       const ok = renderCurrents_DataAPI(d);
       if (!ok) {
@@ -485,9 +482,10 @@ async function refreshAll() {
     }
   })();
 
-  getWavesLatestCDIP142().then(renderWaves).catch(()=>{
-    document.getElementById('wavesTime').textContent='Waves unavailable';
-  });
+  // Waves
+  getWavesLatestCDIP142()
+    .then(renderWaves)
+    .catch(() => { document.getElementById('wavesTime').textContent = 'Waves unavailable'; });
 
   // ---- MAP MARKERS (run in parallel; safe if some fail) ----
   (async () => {
