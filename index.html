@@ -191,8 +191,13 @@ const ERDDAP_BASE            = "https://erddap.cencoos.org/erddap";
 const REFRESH_MS             = 5 * 60 * 1000; // 5 minutes
 const PROXY_BASE = "https://noaa-currents-proxy.chandler12.workers.dev";  // <-- your Worker URL
 
-document.getElementById('stationsPill').textContent =
-  `Tide/Wind:${NOAA_TIDE_WIND_STATION} • Waves:CDIP142 • Currents:${CURRENTS_STATION}`;
+function updateStationsPill(resolvedId = CURRENTS_STATION){
+  const pill = document.getElementById('stationsPill');
+  if (!pill) return;
+  pill.textContent = `Tide/Wind:${NOAA_TIDE_WIND_STATION} • Waves:CDIP142 • Currents:${resolvedId}`;
+}
+document.addEventListener('DOMContentLoaded', () => updateStationsPill());
+
 
 /* ====== HELPERS ====== */
 function splitStationBin(id) {
@@ -236,13 +241,34 @@ const todayYYYYMMDD = () => {
   const d = new Date();
   return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
 };
-const setClock = () => {
-  document.getElementById('clock').textContent =
-    new Date().toLocaleString(undefined, { weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
-};
-setInterval(setClock, 1000); setClock();
+function setClock(){
+  const el = document.getElementById('clock');
+  if (!el) return;
+  el.textContent = new Date().toLocaleString(undefined, {
+    weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
+  });
+}
 
 /* ====== STATION LINKS (maps/info) ====== */
+document.addEventListener('DOMContentLoaded', () => {
+  // clock
+  setClock();
+  setInterval(setClock, 60_000);
+
+  // map/info links (guard each in case IDs ever change)
+  const wind = document.getElementById('windMap');
+  if (wind) wind.href = `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
+
+  const tide = document.getElementById('tideMap');
+  if (tide) tide.href = `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
+
+  const curr = document.getElementById('currentsInfo');
+  if (curr) curr.href = `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/stations/${encodeURIComponent(CURRENTS_STATION)}/details.html`;
+
+  const waves = document.getElementById('wavesMap');
+  if (waves) waves.href = "https://www.ndbc.noaa.gov/station_page.php?station=46237";
+});
+
 document.getElementById('windMap').href  =
   `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
 document.getElementById('tideMap').href  =
@@ -619,5 +645,6 @@ setInterval(refreshCam, 120000);
     <div class="pill mono" id="stationsPill"></div>
   </details>
 </footer>
+
 </body>
 </html>
