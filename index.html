@@ -152,19 +152,18 @@ function splitStationBin(id) {
   return { base, bin: Number.isFinite(bin) ? bin : null };
 }
 
-// Try a few bins; return the first that yields rows
-// Try a few bins via the proxy; return the first that yields rows
+// Try a few bins via the proxy; pass bin separately
 async function probeCurrentsBin(base, candidates = [20, 14, 10, 5, 30]) {
   for (const bin of candidates) {
-    const station = `${base}_${bin}`;
     try {
-      const r = await fetch(`${PROXY_BASE}?station=${encodeURIComponent(station)}`, { cache: "no-store" });
+      const params = new URLSearchParams({ station: base, bin: String(bin), range: '24' });
+      const r = await fetch(`${PROXY_BASE}?${params.toString()}`, { cache: 'no-store' });
       if (!r.ok) continue;
       const j = await r.json();
       const rows = j?.current_predictions?.data || [];
-      if (rows.length) return { id: station, data: j };
+      if (rows.length) return { id: `${base}_${bin}`, data: j };
     } catch {
-      // try next bin
+      // try next
     }
   }
   return null;
@@ -234,13 +233,17 @@ function fmtDateForNOAA(d){
   return `${yyyy}${mm}${dd} ${HH}:${MM}`;
 }
 
-// Currents (next 24h) via CO-OPS datagetter — let API choose nearest-surface bin
+// Currents via Worker — send station (base) + bin separately
 async function getCurrentsNext24_DataAPI(stationIdOrCombined) {
-  const url = `${PROXY_BASE}?station=${encodeURIComponent(stationIdOrCombined)}`;
-  const r = await fetch(url, { cache: "no-store" });
+  const { base, bin } = splitStationBin(stationIdOrCombined);
+  const params = new URLSearchParams({ station: base, range: '24' });
+  if (bin != null) params.set('bin', String(bin));
+  const url = `${PROXY_BASE}?${params.toString()}`;
+
+  const r = await fetch(url, { cache: 'no-store' });
   const txt = await r.text();
   if (!r.ok) throw new Error(`proxy ${r.status} ${txt}`);
-  return JSON.parse(txt); // datagetter JSON
+  return JSON.parse(txt);
 }
 
 // Waves via ERDDAP (CDIP 142 / SF Bar) – also fetch latitude/longitude for Map link
@@ -286,34 +289,34 @@ function renderTides(json) {
 }
 
 // Render DPAPI/“currentPredictions” events
-function renderCurrents_DataAPI(data) {
+function renderCurrentsFromTable(data) {
   const ul = document.getElementById('currentsList');
   ul.innerHTML = '';
 
-  // DPAPI returns events; handle a few name variants defensively
-  const events = data?.currentPredictions || data?.predictions || data?.events || data?.data || [];
-  if (!events.length) return false;
+  const tbl  = data?.current_predictions;
+  const cols = tbl?.columns || [];
+  const rows = tbl?.data || [];
+  if (!rows.length) return false;
 
-  for (const ev of events.slice(0, 4)) {
-    const kind = (ev.eventType || ev.type || 'Event').replace(/_/g, ' ');
-    const when = tzFmt(ev.time || ev.t || ev.dateTime);
-    const vel  = ev.velocity ?? ev.speed;
-    const dir  = ev.direction;
+  const idx = name => cols.indexOf(name);
+  const iT = idx('Time');
+  const iV = idx('Velocity_kts') >= 0 ? idx('Velocity_kts') : idx('Velocity');
+  const iD = idx('Direction_deg');
 
+  for (const r of rows.slice(0, 4)) {
+    const when = r[iT], vel = r[iV], dir = iD >= 0 ? r[iD] : null;
     const li = document.createElement('li');
     li.innerHTML =
-      `<strong>${kind}</strong> — ${tzFmt(when)} — ` +
+      `<strong>Event</strong> — ${tzFmt(when)} — ` +
       `<span class="mono">${fmt1(vel)} kt</span>` +
       ` — ${dir != null ? `${fmt0(dir)}° ${toCardinal(dir)}` : '—'}`;
     ul.appendChild(li);
   }
-
   document.getElementById('currentsStatus').textContent = '';
   return true;
 }
 
-// make old/new names both work
-const renderCurrentsFromDPAPI = renderCurrents_DataAPI;
+function renderCurrents_DataAPI(data) { return renderCurrentsFromTable(data); }
 
 function renderWaves(w) {
   document.getElementById('waveHeight').textContent = fmt1(w.sigWaveHeightFt);
@@ -404,21 +407,24 @@ async function refreshAll() {
 
   // Currents — try configured bin; if empty, probe a few bins and use the first that works.
   (async () => {
-    const listEl = document.getElementById('currentsList');
+    const listEl   = document.getElementById('currentsList');
     const statusEl = document.getElementById('currentsStatus');
+
     try {
       let resolved = CURRENTS_STATION;                 // e.g., "SFB1201_20"
-      let data = await getCurrentsNext24_DataAPI(resolved);
-      let ok = renderCurrentsFromDPAPI(data);
+      let data     = await getCurrentsNext24_DataAPI(resolved);
+      let ok       = renderCurrents_DataAPI(data);     // <-- render the Data API table
 
       if (!ok) {
         const { base } = splitStationBin(resolved);
         statusEl.textContent = 'Checking other bins…';
-        const found = await probeCurrentsBin(base);
-        if (found) {
-          resolved = found.id;                         // e.g., "SFB1201_14"
-          data = found.data;
-          let ok = renderCurrentsFromDPAPI(data);
+
+        // define it here and keep using the same `ok` variable
+        const probe = await probeCurrentsBin(base);
+        if (probe) {
+          resolved = probe.id;                         // e.g., "SFB1201_14"
+          data     = probe.data;
+          ok       = renderCurrents_DataAPI(data);
           document.getElementById('stationsPill').textContent =
             `Tide/Wind:${NOAA_TIDE_WIND_STATION} • Waves:CDIP142 • Currents:${resolved}`;
         }
@@ -426,10 +432,8 @@ async function refreshAll() {
 
       if (!ok) {
         listEl.innerHTML = '<li>No current events in next 24h</li>';
-        statusEl.textContent = '';
-      } else {
-        statusEl.textContent = '';
       }
+      statusEl.textContent = '';
     } catch (e) {
       listEl.innerHTML = '<li>Error loading currents</li>';
       statusEl.textContent = 'Currents API error (see console).';
