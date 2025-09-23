@@ -61,6 +61,24 @@
   </header>
 
   <div class="grid">
+    <section class="card fullwidth" id="camCard">
+      <h2>
+        <!-- camera icon -->
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke="currentColor" fill="none">
+          <path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 7h4l2-3h6l2 3h4v13H3z"/>
+          <circle cx="12" cy="13" r="4" stroke-width="2"/>
+        </svg>
+        From South Shore Towards the Boat Ramp
+      </h2>
+      <div>
+        <img id="alamedaCam"
+            src="https://boardsportscalifornia.com/boardsportscalifornia.com/alamedacam.jpg"
+            alt="Alameda Cam"
+            style="width:100%;border-radius:0.5rem;" />
+      </div>
+      <div class="status small" id="camStatus"></div>
+    </section>
+
     <section class="card" id="windCard">
       <h2>
         <!-- wind icon -->
@@ -546,8 +564,20 @@ async function refreshAll() {
   })();
 }
 
+// ---- CAMERA SNAPSHOT (updates every 2 min) ----
+function refreshCam() {
+  const cam = document.getElementById('alamedaCam');
+  if (!cam) return;
+  const t = Date.now(); // cache-buster
+  cam.src = `https://boardsportscalifornia.com/boardsportscalifornia.com/alamedacam.jpg?${t}`;
+  const s = document.getElementById('camStatus');
+  if (s) s.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+}
+
 refreshAll();
 setInterval(refreshAll, REFRESH_MS);
+refreshCam();
+setInterval(refreshCam, 120000);
 </script>
 </body>
 </html>
