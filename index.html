@@ -129,24 +129,6 @@
       <div class="status small" id="windTime">Loading…</div>
     </section>
 
-    <section class="card" id="wavesCard">
-      <h2>
-        <!-- waves icon -->
-        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke="currentColor" fill="none">
-          <path stroke-width="2" d="M3 16c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2"/>
-          <path stroke-width="2" d="M3 12c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2"/>
-        </svg>
-        Waves (CDIP 142 / SF Bar)
-        <span class="links"><a id="wavesMap" target="_blank" rel="noopener">Map</a></span>
-      </h2>
-      <div class="row">
-        <div class="big" id="waveHeight">--</div><div class="unit">ft</div>
-        <div class="sub" id="wavePeriod">— s</div>
-        <div class="sub" id="waveDir">—° —</div>
-      </div>
-      <div class="status small" id="wavesTime">Loading…</div>
-    </section>
-
     <section class="card" id="tidesCard">
       <h2>
         <!-- tide gauge icon -->
@@ -161,18 +143,39 @@
       <div class="status small" id="tidesStatus"></div>
     </section>
 
-    <section class="card" id="currentsCard">
+    <section class="card" id="tideCard">
       <h2>
-        <!-- current/arrow icon -->
-        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke="currentColor" fill="none">
-          <path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M5 12h10"/>
-          <path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 5l7 7-7 7"/>
+        <!-- tide icon -->
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+          <path stroke-width="2" stroke-linecap="round" d="M3 12h18M5 16c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2"/>
         </svg>
-        Currents (Next 24h)
-        <span class="links"><a id="currentsInfo" target="_blank" rel="noopener">Station</a></span>
+        Tide (Alameda — predictions)
+        <span class="links"><a id="tideMap" target="_blank" rel="noopener">Map</a></span>
       </h2>
-      <ul class="list" id="currentsList"><li>Loading…</li></ul>
-      <div class="status small" id="currentsStatus"></div>
+      <div class="row">
+        <div class="big" id="tideNow">--</div><div class="unit">ft</div>
+        <div class="sub" id="tideTrend">—</div>
+      </div>
+      <ul class="list small">
+        <li>Next: <span id="tideNext">—</span></li>
+      </ul>
+      <div class="status small">Predicted highs/lows for 9414750</div>
+    </section>
+
+    <section class="card" id="chopCard">
+      <h2>
+        <!-- wave icon -->
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+          <path stroke-width="2" stroke-linecap="round" d="M3 16c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2"/>
+        </svg>
+        Local Chop (Alameda)
+        <span class="links"><a id="chopInfo" target="_blank" rel="noopener">What is this?</a></span>
+      </h2>
+      <div class="row">
+        <div class="big" id="chopHeight">--</div><div class="unit">ft</div>
+        <div class="sub" id="chopState">—</div>
+      </div>
+      <div class="status small">Estimated from wind at NOAA 9414750</div>
     </section>
 
     <section class="card fullwidth" id="mapCard">
@@ -186,17 +189,26 @@
 <script>
 /* ====== CONFIG ====== */
 const NOAA_TIDE_WIND_STATION = "9414750";     // Alameda
-const CURRENTS_STATION       = "SFB1201_20";  // Entrance Outside (can change later)
 const ERDDAP_BASE            = "https://erddap.cencoos.org/erddap";
 const REFRESH_MS             = 5 * 60 * 1000; // 5 minutes
-const PROXY_BASE = "https://noaa-currents-proxy.chandler12.workers.dev";  // <-- your Worker URL
 
-function updateStationsPill(resolvedId = CURRENTS_STATION){
+function updateStationsPill(){
   const pill = document.getElementById('stationsPill');
   if (!pill) return;
-  pill.textContent = `Tide/Wind:${NOAA_TIDE_WIND_STATION} • Waves:CDIP142 • Currents:${resolvedId}`;
+  pill.textContent = `NOAA ${NOAA_TIDE_WIND_STATION} (Wind/Tides) • Chop from wind`;
 }
-document.addEventListener('DOMContentLoaded', () => updateStationsPill());
+
+document.addEventListener('DOMContentLoaded', () => {
+  updateStationsPill();
+
+  const a = document.getElementById('chopInfo');
+  if (a) a.href = 'https://en.wikipedia.org/wiki/Sea_state';
+
+  refreshTidePredictions();                 // initial
+  setInterval(refreshTidePredictions, 10*60*1000); // every 10 min
+  // you can keep adding more stuff here...
+
+});
 
 
 /* ====== HELPERS ====== */
@@ -206,26 +218,92 @@ function splitStationBin(id) {
   return { base, bin: Number.isFinite(bin) ? bin : null };
 }
 
-// Try a few bins via the proxy; pass bin separately
-async function probeCurrentsBin(base, candidates = [20, 14, 10, 5, 30]) {
-  for (const bin of candidates) {
-    try {
-      const params = new URLSearchParams({ station: base, bin: String(bin), range: '24' });
-      const r = await fetch(`${PROXY_BASE}?${params.toString()}`, { cache: 'no-store' });
-      if (!r.ok) continue;
-      const j = await r.json();
-      const rows = j?.current_predictions?.data || [];
-      if (rows.length) return { id: `${base}_${bin}`, data: j };
-    } catch {
-      // try next
-    }
-  }
-  return null;
+// --- Tide predictions for Alameda 9414750 ---
+async function fetchTideHiLo(station='9414750'){
+  const base = 'https://api.tidesandcurrents.noaa.gov/api/prod/datagetter';
+
+  // Today and tomorrow
+  const now = new Date();
+  const today = now.toISOString().slice(0,10).replace(/-/g,'');
+  const tomorrow = new Date(now.getTime() + 24*60*60*1000)
+                      .toISOString().slice(0,10).replace(/-/g,'');
+
+  const params = new URLSearchParams({
+    product:'predictions',
+    interval:'hilo',
+    time_zone:'lst_ldt',
+    datum:'MLLW',         // ✅ add this
+    units:'english',
+    format:'json',
+    begin_date: today,
+    end_date: tomorrow,
+    station
+  });
+
+  const resp = await fetch(`${base}?${params.toString()}`);
+  if (!resp.ok) throw new Error(`tide predictions ${resp.status}`);
+  const data = await resp.json();
+  return data?.predictions || [];
 }
 
-// Optional; keep only if you use it to show loading text
-function showCurrStatus(msg) {
-  document.getElementById('currentsStatus').textContent = msg;
+function renderTideFromPredictions(preds){
+  const now = new Date();
+  let prev=null, next=null;
+  for (const p of preds){
+    const t = new Date(p.t);
+    if (t <= now) prev = p; else { next = p; break; }
+  }
+  let trend='—';
+  if (prev && next){
+    trend = (prev.type==='L' && next.type==='H') ? 'flooding (rising)'
+         : (prev.type==='H' && next.type==='L') ? 'ebbing (falling)'
+         : '—';
+  }
+  let nowFt=null;
+  if (prev && next){
+    const t0=new Date(prev.t).getTime(), t1=new Date(next.t).getTime();
+    const y0=parseFloat(prev.v), y1=parseFloat(next.v);
+    const x=now.getTime();
+    const frac = Math.min(1, Math.max(0, (x - t0)/(t1 - t0)));
+    nowFt = y0 + (y1 - y0)*frac;
+  }
+  const nowEl = document.getElementById('tideNow');
+  const trendEl = document.getElementById('tideTrend');
+  const nextEl = document.getElementById('tideNext');
+  if (nowEl)   nowEl.textContent   = nowFt != null ? nowFt.toFixed(1) : '--';
+  if (trendEl) trendEl.textContent = trend;
+  if (nextEl && next){
+    const dt = new Date(next.t);
+    const label = `${next.type==='H' ? 'High' : 'Low'} ${parseFloat(next.v).toFixed(1)} ft @ ` +
+                  dt.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    nextEl.textContent = label;
+  }
+}
+
+async function refreshTidePredictions(){
+  try{
+    const preds = await fetchTideHiLo('9414750');
+    renderTideFromPredictions(preds);
+  }catch(e){
+    const s = document.getElementById('tideTrend');
+    if (s) s.textContent = 'tide data unavailable';
+  }
+}
+
+// --- Local Chop estimate from wind (Alameda 9414750) ---
+function updateChopFromWind(windKt){
+  // 0.10 ft per kt is a simple, useful Bay heuristic (cap for sanity)
+  const h = Math.max(0, Math.min(3.5, Math.round((windKt * 0.10) * 10) / 10)); // feet
+  let state = 'glassy';
+  if (windKt >= 6  && windKt < 12) state = 'light chop';
+  else if (windKt >= 12 && windKt < 18) state = 'moderate chop';
+  else if (windKt >= 18 && windKt < 25) state = 'rough';
+  else if (windKt >= 25) state = 'very rough';
+
+  const hEl = document.getElementById('chopHeight');
+  const sEl = document.getElementById('chopState');
+  if (hEl) hEl.textContent = h.toFixed(1);
+  if (sEl) sEl.textContent = state;
 }
 
 const toCardinal = deg => {
@@ -262,22 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const tide = document.getElementById('tideMap');
   if (tide) tide.href = `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
 
-  const curr = document.getElementById('currentsInfo');
-  if (curr) curr.href = `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/stations/${encodeURIComponent(CURRENTS_STATION)}/details.html`;
-
-  const waves = document.getElementById('wavesMap');
-  if (waves) waves.href = "https://www.ndbc.noaa.gov/station_page.php?station=46237";
 });
-
-document.getElementById('windMap').href  =
-  `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
-document.getElementById('tideMap').href  =
-  `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
-document.getElementById('currentsInfo').href =
-  `https://api.tidesandcurrents.noaa.gov/dpapi/prod/webapi/stations/${encodeURIComponent(CURRENTS_STATION)}/details.html`; // just a link; CORS doesn't apply
-// Waves map default (always present, even before ERDDAP returns)
-document.getElementById('wavesMap').href =
-  "https://www.ndbc.noaa.gov/station_page.php?station=46237";
 
 /* ====== FETCHERS ====== */
 // Tides (today hilo)
@@ -308,62 +371,17 @@ function fmtDateForNOAA(d){
   return `${yyyy}${mm}${dd} ${HH}:${MM}`;
 }
 
-// Currents via Worker — send station (base) + bin separately
-async function getCurrentsNext24_DataAPI(stationIdOrCombined) {
-  const { base, bin } = splitStationBin(stationIdOrCombined);
-  const params = new URLSearchParams({ station: base, range: '24' });
-  if (bin != null) params.set('bin', String(bin));
-  const url = `${PROXY_BASE}?${params.toString()}`;
-
-  let r, txt;
-  try {
-    r = await fetch(url, { cache: 'no-store' });
-    txt = await r.text();
-  } catch (err) {
-    console.debug('currents fetch error ->', url, err);
-    throw err;
-  }
-
-  // ALWAYS log
-  console.debug('currents raw ->', url, '\n', txt.slice(0, 500));
-
-  if (!r.ok) {
-    throw new Error(`proxy ${r.status} ${txt}`);
-  }
-  return JSON.parse(txt);
-}
-
-// Waves via ERDDAP (CDIP 142 / SF Bar) – also fetch latitude/longitude for Map link
-async function getWavesLatestCDIP142() {
-  const vars = "time,latitude,longitude,sea_surface_wave_significant_height," +
-               "sea_surface_wave_period_at_variance_spectral_density_maximum," +
-               "sea_surface_wave_from_direction";
-  const url = `${ERDDAP_BASE}/tabledap/edu_ucsd_cdip_142.json?${vars}` +
-              "&sea_surface_wave_significant_height>=0&orderByMax(%22time%22)";
-  const r = await fetch(url, { cache: 'no-store' });
-  if (!r.ok) throw new Error('waves');
-  const data = await r.json();
-  const cols = data?.table?.columnNames || [];
-  const row = (data?.table?.rows || [])[0] || [];
-  const i = n => cols.indexOf(n);
-  return {
-    timeISO: row[i('time')],
-    lat: row[i('latitude')],
-    lon: row[i('longitude')],
-    sigWaveHeightFt: row[i('sea_surface_wave_significant_height')]*3.28084,
-    peakPeriodSec: row[i('sea_surface_wave_period_at_variance_spectral_density_maximum')],
-    meanDirectionDeg: row[i('sea_surface_wave_from_direction')]
-  };
-}
-
 /* ====== RENDERERS ====== */
 function renderWind(json) {
   const obs = (json?.data||[])[0]||{};
-  document.getElementById('windSpeed').textContent = fmt1(obs.s);
+  const speedKt = parseFloat(obs.s);
+  document.getElementById('windSpeed').textContent = fmt0(speedKt);
+  updateChopFromWind(speedKt);
   document.getElementById('windGust').textContent  = `(gust ${fmt1(obs.g)} kt)`;
   document.getElementById('windDir').textContent   = `${fmt0(obs.d)}° ${toCardinal(obs.d)}`;
   document.getElementById('windTime').textContent  = obs.t ? `As of ${tzFmt(obs.t)}` : '';
 }
+
 function renderTides(json) {
   const ul = document.getElementById('tidesList'); ul.innerHTML='';
   const arr = json?.predictions || [];
@@ -372,119 +390,6 @@ function renderTides(json) {
     const li = document.createElement('li');
     li.innerHTML = `<strong>${p.type==='H'?'High':'Low'}</strong> — ${tzFmt(p.t)} — <span class="mono">${(+p.v).toFixed(1)} ft</span>`;
     ul.appendChild(li);
-  }
-}
-
-// Render DPAPI/“currentPredictions” events
-function renderCurrentsFromTable(data) {
-  const ul = document.getElementById('currentsList');
-  ul.innerHTML = '';
-
-  const tbl  = data?.current_predictions;
-  const cols = tbl?.columns || [];
-  const rows = tbl?.data || [];
-  if (!rows.length) return false;
-
-  const idx = name => cols.indexOf(name);
-  const iT = idx('Time');
-  const iV = idx('Velocity_kts') >= 0 ? idx('Velocity_kts') : idx('Velocity');
-  const iD = idx('Direction_deg');
-
-  for (const r of rows.slice(0, 4)) {
-    const when = r[iT], vel = r[iV], dir = iD >= 0 ? r[iD] : null;
-    const li = document.createElement('li');
-    li.innerHTML =
-      `<strong>Event</strong> — ${tzFmt(when)} — ` +
-      `<span class="mono">${fmt1(vel)} kt</span>` +
-      ` — ${dir != null ? `${fmt0(dir)}° ${toCardinal(dir)}` : '—'}`;
-    ul.appendChild(li);
-  }
-  document.getElementById('currentsStatus').textContent = '';
-  return true;
-}
-
-// Renders any of: DPAPI table, datagetter predictions, or "cp" vector series
-function renderCurrents_DataAPI(data) {
-  const ul = document.getElementById('currentsList');
-  const statusEl = document.getElementById('currentsStatus');
-  ul.innerHTML = '';
-  statusEl.textContent = '';
-
-  // ---- Case A: DPAPI-style table {current_predictions:{columns,data}} ----
-  const tbl = data?.current_predictions;
-  if (tbl && Array.isArray(tbl.columns) && Array.isArray(tbl.data)) {
-    const cols = tbl.columns;
-    const idx = n => cols.indexOf(n);
-    const iT = idx('Time');
-    const iV = idx('Velocity_kts') >= 0 ? idx('Velocity_kts') : idx('Velocity');
-    const iD = idx('Direction_deg');
-
-    const rows = tbl.data.slice(0, 4);
-    if (!rows.length) return false;
-
-    for (const r of rows) {
-      const when = r[iT], vel = r[iV], dir = iD >= 0 ? r[iD] : null;
-      const li = document.createElement('li');
-      li.innerHTML =
-        `<strong>Event</strong> — ${tzFmt(when)} — ` +
-        `<span class="mono">${fmt1(vel)} kt</span>` +
-        ` — ${dir != null ? `${fmt0(dir)}° ${toCardinal(dir)}` : '—'}`;
-      ul.appendChild(li);
-    }
-    return true;
-  }
-
-  // ---- Case B: datagetter "predictions" array [{t,v,d}] ----
-  let preds = data?.predictions || data?.current_predictions?.predictions
-  if (Array.isArray(preds) && preds.length) {
-    for (const p of preds.slice(0, 4)) {
-      const t = p.t ?? p.Time ?? p.time;
-      const v = +(p.v ?? p.Velocity_kts ?? p.velocity ?? NaN);
-      const d = p.d ?? p.Direction_deg ?? p.direction ?? null;
-      const li = document.createElement('li');
-      li.innerHTML =
-        `<strong>Event</strong> — ${tzFmt(t)} — ` +
-        `<span class="mono">${fmt1(v)} kt</span>` +
-        ` — ${d != null ? `${fmt0(d)}° ${toCardinal(d)}` : '—'}`;
-      ul.appendChild(li);
-    }
-    return true;
-  }
-
-  // ---- Case C: "cp" vector series (per-minute/hour sample) ----
-  // Use Velocity_Major (kt). Direction = meanFloodDir if vel >= 0 else meanEbbDir.
-  const cp = data?.current_predictions?.cp;
-  if (Array.isArray(cp) && cp.length) {
-    for (const r of cp.slice(0, 4)) {
-      const t = r.Time || r.time;
-      const vel = Number(r.Velocity_Major);
-      const dir = vel >= 0 ? Number(r.meanFloodDir) : Number(r.meanEbbDir);
-      const li = document.createElement('li');
-      li.innerHTML =
-        `${tzFmt(t)} — ` +
-        `<span class="mono">${fmt1(Math.abs(vel))} kt</span>` +
-        ` — ${Number.isFinite(dir) ? `${fmt0(dir)}° ${toCardinal(dir)}` : '—'}`;
-      ul.appendChild(li);
-    }
-    // Show which bin we actually rendered if present
-    const bin = cp[0]?.Bin ?? null;
-    if (bin) statusEl.textContent = `Bin ${bin}, ${cp.length} samples in window`;
-    return true;
-  }
-
-  return false;
-}
-
-function renderWaves(w) {
-  document.getElementById('waveHeight').textContent = fmt1(w.sigWaveHeightFt);
-  document.getElementById('wavePeriod').textContent = `${fmt1(w.peakPeriodSec)} s`;
-  document.getElementById('waveDir').textContent    = `${fmt0(w.meanDirectionDeg)}° ${toCardinal(w.meanDirectionDeg)}`;
-  document.getElementById('wavesTime').textContent  = w.timeISO ? `As of ${tzFmt(w.timeISO)}` : '';
-  // upgrade map link to an OSM pin when lat/lon are available
-  if (w.lat!=null && w.lon!=null) {
-    const z=11;
-    document.getElementById('wavesMap').href = `https://www.openstreetmap.org/?mlat=${w.lat}&mlon=${w.lon}#map=${z}/${w.lat}/${w.lon}`;
-    addMarker(w.lat, w.lon, 'CDIP 142 (Waves)', document.getElementById('wavesMap').href);
   }
 }
 
@@ -505,11 +410,11 @@ function ensureMap() {
 function addMarker(lat, lon, label, linkHref) {
   if (lat == null || lon == null) return;
   ensureMap();
-  const opts = {};
-  const m = L.marker([lat, lon], opts).addTo(markersLayer);
+  const m = L.marker([lat, lon]).addTo(markersLayer);
   const inner = linkHref ? `<a href="${linkHref}" target="_blank" rel="noopener">${label}</a>` : label;
   m.bindPopup(inner);
   bounds.extend([lat, lon]);
+  fitMarkers(); // <— keep view framed even if markers arrive at different times
 }
 
 function fitMarkers() {
@@ -531,25 +436,6 @@ async function getNoaaStationMetaLatLon(stationId) {
   } catch { return {}; }
 }
 
-// Currents station meta (use BASE id with MDAPI; no DPAPI)
-async function getCurrentsStationLatLon(currentsId) {
-  const { base } = splitStationBin(currentsId);
-  try {
-    const u = `https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/${base}.json`;
-    const r = await fetch(u, { cache: 'no-store' });
-    if (!r.ok) return {};
-    const j = await r.json();
-    const s = j?.stations?.[0] || j?.station || j?.data || j;
-    const lat = parseFloat(s?.lat || s?.latitude);
-    const lon = parseFloat(s?.lng || s?.lon || s?.longitude);
-    return (Number.isFinite(lat) && Number.isFinite(lon)) ? { lat, lon } : {};
-  } catch { return {}; }
-}
-
-// --- Currents station resolver ---
-let RESOLVED_CURR_BIN = null; // e.g. "SFB1201_14"
-const currentsBaseFrom = id => String(id).split('_')[0];
-
 /* ====== CONTROLLER ====== */
 async function refreshAll() {
   // Wind
@@ -562,50 +448,15 @@ async function refreshAll() {
     .then(renderTides)
     .catch(() => { document.getElementById('tidesList').innerHTML = '<li>Error loading tides</li>'; });
 
-  // Currents — try configured bin; if empty, probe a few bins and use the first that works.
-  (async () => {
-    const listEl   = document.getElementById('currentsList');
-    const statusEl = document.getElementById('currentsStatus');
-
-    try {
-      let resolved = CURRENTS_STATION;                 // e.g., "SFB1201_20"
-      let data     = await getCurrentsNext24_DataAPI(resolved);
-      let ok       = renderCurrents_DataAPI(data);     // <-- render the Data API table
-
-      if (!ok) {
-        const { base } = splitStationBin(resolved);
-        statusEl.textContent = 'Checking other bins…';
-
-        // define it here and keep using the same `ok` variable
-        const probe = await probeCurrentsBin(base);
-        if (probe) {
-          resolved = probe.id;                         // e.g., "SFB1201_14"
-          data     = probe.data;
-          ok       = renderCurrents_DataAPI(data);
-          document.getElementById('stationsPill').textContent =
-            `Tide/Wind:${NOAA_TIDE_WIND_STATION} • Waves:CDIP142 • Currents:${resolved}`;
-        }
-      }
-
-      if (!ok) {
-        listEl.innerHTML = '<li>No current events in next 24h</li>';
-      }
-      statusEl.textContent = '';
-    } catch (e) {
-      listEl.innerHTML = '<li>Error loading currents</li>';
-      statusEl.textContent = 'Currents API error (see console).';
-      console.error(e);
-    }
-  })();
-
-  // Waves
-  getWavesLatestCDIP142()
-    .then(renderWaves)
-    .catch(() => { document.getElementById('wavesTime').textContent = 'Waves unavailable'; });
-
   // ---- MAP MARKERS (run in parallel; safe if some fail) ----
   (async () => {
     document.getElementById('mapStatus').textContent = 'Loading station locations…';
+
+    // Reset layer + bounds each refresh
+    ensureMap();
+    markersLayer.clearLayers();
+    bounds = L.latLngBounds();
+
     // Tide/Wind station (same NOAA id)
     try {
       const meta = await getNoaaStationMetaLatLon(NOAA_TIDE_WIND_STATION);
@@ -615,7 +466,7 @@ async function refreshAll() {
       }
     } catch {}
 
-    // Fit map to whatever we have (including waves marker added earlier)
+    // Fit to whatever we have now
     fitMarkers();
     document.getElementById('mapStatus').textContent = '';
   })();
