@@ -240,9 +240,21 @@ async function getCurrentsNext24_DataAPI(stationIdOrCombined) {
   if (bin != null) params.set('bin', String(bin));
   const url = `${PROXY_BASE}?${params.toString()}`;
 
-  const r = await fetch(url, { cache: 'no-store' });
-  const txt = await r.text();
-  if (!r.ok) throw new Error(`proxy ${r.status} ${txt}`);
+  let r, txt;
+  try {
+    r = await fetch(url, { cache: 'no-store' });
+    txt = await r.text();
+  } catch (err) {
+    console.debug('currents fetch error ->', url, err);
+    throw err;
+  }
+
+  // ALWAYS log
+  console.debug('currents raw ->', url, '\n', txt.slice(0, 500));
+
+  if (!r.ok) {
+    throw new Error(`proxy ${r.status} ${txt}`);
+  }
   return JSON.parse(txt);
 }
 
@@ -316,7 +328,77 @@ function renderCurrentsFromTable(data) {
   return true;
 }
 
-function renderCurrents_DataAPI(data) { return renderCurrentsFromTable(data); }
+// Renders any of: DPAPI table, datagetter predictions, or "cp" vector series
+function renderCurrents_DataAPI(data) {
+  const ul = document.getElementById('currentsList');
+  const statusEl = document.getElementById('currentsStatus');
+  ul.innerHTML = '';
+  statusEl.textContent = '';
+
+  // ---- Case A: DPAPI-style table {current_predictions:{columns,data}} ----
+  const tbl = data?.current_predictions;
+  if (tbl && Array.isArray(tbl.columns) && Array.isArray(tbl.data)) {
+    const cols = tbl.columns;
+    const idx = n => cols.indexOf(n);
+    const iT = idx('Time');
+    const iV = idx('Velocity_kts') >= 0 ? idx('Velocity_kts') : idx('Velocity');
+    const iD = idx('Direction_deg');
+
+    const rows = tbl.data.slice(0, 4);
+    if (!rows.length) return false;
+
+    for (const r of rows) {
+      const when = r[iT], vel = r[iV], dir = iD >= 0 ? r[iD] : null;
+      const li = document.createElement('li');
+      li.innerHTML =
+        `<strong>Event</strong> — ${tzFmt(when)} — ` +
+        `<span class="mono">${fmt1(vel)} kt</span>` +
+        ` — ${dir != null ? `${fmt0(dir)}° ${toCardinal(dir)}` : '—'}`;
+      ul.appendChild(li);
+    }
+    return true;
+  }
+
+  // ---- Case B: datagetter "predictions" array [{t,v,d}] ----
+  let preds = data?.predictions || data?.current_predictions?.predictions
+  if (Array.isArray(preds) && preds.length) {
+    for (const p of preds.slice(0, 4)) {
+      const t = p.t ?? p.Time ?? p.time;
+      const v = +(p.v ?? p.Velocity_kts ?? p.velocity ?? NaN);
+      const d = p.d ?? p.Direction_deg ?? p.direction ?? null;
+      const li = document.createElement('li');
+      li.innerHTML =
+        `<strong>Event</strong> — ${tzFmt(t)} — ` +
+        `<span class="mono">${fmt1(v)} kt</span>` +
+        ` — ${d != null ? `${fmt0(d)}° ${toCardinal(d)}` : '—'}`;
+      ul.appendChild(li);
+    }
+    return true;
+  }
+
+  // ---- Case C: "cp" vector series (per-minute/hour sample) ----
+  // Use Velocity_Major (kt). Direction = meanFloodDir if vel >= 0 else meanEbbDir.
+  const cp = data?.current_predictions?.cp;
+  if (Array.isArray(cp) && cp.length) {
+    for (const r of cp.slice(0, 4)) {
+      const t = r.Time || r.time;
+      const vel = Number(r.Velocity_Major);
+      const dir = vel >= 0 ? Number(r.meanFloodDir) : Number(r.meanEbbDir);
+      const li = document.createElement('li');
+      li.innerHTML =
+        `${tzFmt(t)} — ` +
+        `<span class="mono">${fmt1(Math.abs(vel))} kt</span>` +
+        ` — ${Number.isFinite(dir) ? `${fmt0(dir)}° ${toCardinal(dir)}` : '—'}`;
+      ul.appendChild(li);
+    }
+    // Show which bin we actually rendered if present
+    const bin = cp[0]?.Bin ?? null;
+    if (bin) statusEl.textContent = `Bin ${bin}, ${cp.length} samples in window`;
+    return true;
+  }
+
+  return false;
+}
 
 function renderWaves(w) {
   document.getElementById('waveHeight').textContent = fmt1(w.sigWaveHeightFt);
