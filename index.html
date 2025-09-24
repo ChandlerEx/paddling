@@ -48,9 +48,6 @@
   .links a:hover{text-decoration:underline}
   .fullwidth{grid-column:1 / -1}
   .leaflet-container{background:#0b1220}
-  .hfvec { stroke:#6cc0ff; stroke-opacity:.85; stroke-width:1.5; }
-  .hfvec.head { stroke:#6cc0ff; stroke-width:1.5 }
-
 
   /* New site header (boat + title + anniversary) */
   .site-header{text-align:center;padding:16px 12px}
@@ -223,8 +220,7 @@
         Bay Surface Currents (HF Radar)
         <span class="links"><a id="hfInfo" target="_blank" rel="noopener">About HF Radar</a></span>
       </h2>
-      <div id="hfMap" style="height:260px;border-radius:12px;overflow:hidden;"></div>
-      <div class="status small" id="hfStatus">Loading currents…</div>
+      <div class="status small" id="hfStatus">Loading current…</div>
     </section>
 
     <section class="card fullwidth" id="mapCard">
@@ -555,119 +551,91 @@ async function getNoaaStationMetaLatLon(stationId) {
   } catch { return {}; }
 }
 
-/* ===== HF RADAR (NDBC CSV TABULAR) ===== */
+/* ===== HF RADAR — Single point via Worker (no CORS) ===== */
 
-// Layer + maps
-let hfLayerMain, hfLayerCard, hfMap;
+// Your Cloudflare Worker endpoint:
+const HF_ONEPOINT_URL = 'https://noaa-currents-proxy.chandler12.workers.dev/';
 
-// Info link (optional)
-document.addEventListener('DOMContentLoaded', () => {
-  const hfInfo = document.getElementById('hfInfo');
-  if (hfInfo) hfInfo.href = 'https://hfradar.ndbc.noaa.gov/';
-});
+// Target (closest to Alameda you specified)
+const HF_TARGET = { lat: 37.7477, lon: -122.3020 };
 
-// Alameda / Central Bay bounding box (your link’s coords)
-const HF_BBOX = {
-  lat1: 37.698433509831, lon1: -122.41787498153,
-  lat2: 37.861244721888, lon2: -122.14321677841
-};
+// Leaflet overlay for the single current arrow
+let hfPointLayer, hfPointControlAdded = false;
 
-// Build a “latest hour” CSV URL
-function hfUrlLatest(){
-  const now = new Date();
-  const past = new Date(now.getTime() - 60*60*1000); // 1 hour
-  const fmt = d => {
-    // NDBC expects "YYYY-MM-DD HH:MM:SS"
-    const pad = n => String(n).padStart(2,'0');
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
-  };
-  const from = fmt(past), to = fmt(now);
-  const q = new URLSearchParams({
-    from, to,
-    lat: HF_BBOX.lat1, lng: HF_BBOX.lon1,
-    lat2: HF_BBOX.lat2, lng2: HF_BBOX.lon2,
-    uom: 'kts', fmt: 'csv'
-  });
-  return `https://hfradar.ndbc.noaa.gov/tabdownload.php?${q.toString()}`;
-}
-
-// Fetch + parse CSV → [{time,lat,lon,u,v}]
-async function fetchHFcsv(){
-  const r = await fetch(hfUrlLatest(), { cache:'no-store' });
-  if (!r.ok) throw new Error(`hf csv ${r.status}`);
-  const txt = (await r.text()).trim();
-  // Guard empty
-  const lines = txt.split('\n');
-  if (lines.length <= 1) return [];
-  // First line is header: time,latitude,longitude,u,v
-  return lines.slice(1).map(line => {
-    const [time, lat, lon, u, v] = line.split(',');
-    return { time:new Date(time), lat:+lat, lon:+lon, u:+u, v:+v };
-  });
-}
-
-// Draw short vector + tiny chevron
-function drawVector(layer, lat, lon, speedKt, bearingDeg){
-  // Scale: tune to taste; this is short so flat projection is fine
-  const SCALE = 0.005; // degrees per kt
-  const theta = bearingDeg * Math.PI/180;
-  const d = speedKt * SCALE;
-  const lat2 = lat + d * Math.cos(theta);
-  const lon2 = lon + d * Math.sin(theta);
-
-  L.polyline([[lat,lon],[lat2,lon2]], { className:'hfvec' }).addTo(layer);
-
-  // chevron head
-  const headLen = d * 0.35;
-  const left = [lat2 - headLen*Math.cos(theta - Math.PI/8), lon2 - headLen*Math.sin(theta - Math.PI/8)];
-  const right= [lat2 - headLen*Math.cos(theta + Math.PI/8), lon2 - headLen*Math.sin(theta + Math.PI/8)];
-  L.polyline([left,[lat2,lon2],right], { className:'hfvec head' }).addTo(layer);
-}
-
-// u,v (knots) → speed (kt) + bearing (deg from North, clockwise)
-function uvToSpeedBearing(u, v){
-  const speed = Math.hypot(u, v);                  // already kts
-  let bearing = (Math.atan2(u, v) * 180/Math.PI);  // from north
-  if (bearing < 0) bearing += 360;
-  return { speed, bearing };
-}
-
-// Ensure layers (ON by default)
-function ensureHFLayers(){
-  if (!hfLayerMain){
-    hfLayerMain = L.layerGroup().addTo(ensureMap()); // add to main map, ON
-  }
-  if (!hfMap){
-    hfMap = L.map('hfMap', { scrollWheelZoom:true });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 18, attribution: '&copy; OpenStreetMap'
-    }).addTo(hfMap);
-    hfLayerCard = L.layerGroup().addTo(hfMap); // ON by default in card
-    // Frame to bbox initially
-    hfMap.fitBounds([[HF_BBOX.lat1, HF_BBOX.lon1],[HF_BBOX.lat2, HF_BBOX.lon2]], { padding:[10,10] });
-  }
-}
-
-// Fetch + render to both maps
-async function refreshHFcsv(){
-  ensureHFLayers();
-  const status = document.getElementById('hfStatus');
-  if (status) status.textContent = 'Loading HF Radar…';
-  try{
-    const rows = await fetchHFcsv();
-    hfLayerMain.clearLayers();
-    hfLayerCard.clearLayers();
-
-    for (const {lat, lon, u, v} of rows){
-      const { speed, bearing } = uvToSpeedBearing(u, v);
-      if (!isFinite(speed) || !isFinite(bearing)) continue;
-      drawVector(hfLayerMain, lat, lon, speed, bearing);
-      drawVector(hfLayerCard, lat, lon, speed, bearing);
+function ensureHFPointLayer() {
+  ensureMap();
+  if (!hfPointLayer) {
+    hfPointLayer = L.layerGroup();
+    // Add overlay toggle once
+    if (!hfPointControlAdded) {
+      L.control.layers(null, { 'HF Current @ Alameda': hfPointLayer }, { collapsed: false }).addTo(map);
+      hfPointControlAdded = true;
     }
-    if (status) status.textContent = rows.length
-      ? `Showing ${rows.length} vectors (latest ~1h)`
-      : 'No vectors in the last hour';
-  }catch(e){
+    hfPointLayer.addTo(map); // ON by default
+  }
+  return hfPointLayer;
+}
+
+function drawArrow(layer, lat, lon, speed, bearingDeg) {
+  // Scale so short arrows are visible but not huge; speed is in cm/s by default
+  const SCALE_DEG_PER_UNIT = 0.00006; // tweak as desired
+  const d = speed * SCALE_DEG_PER_UNIT;
+
+  const th = bearingDeg * Math.PI/180;
+  const lat2 = lat + d * Math.cos(th);
+  const lon2 = lon + d * Math.sin(th);
+
+  L.polyline([[lat,lon],[lat2,lon2]], { color:'#6cc0ff', weight: 2, opacity:.95 }).addTo(layer);
+
+  const head = d * 0.35;
+  const Lp = [lat2 - head*Math.cos(th - Math.PI/8), lon2 - head*Math.sin(th - Math.PI/8)];
+  const Rp = [lat2 - head*Math.cos(th + Math.PI/8), lon2 - head*Math.sin(th + Math.PI/8)];
+  L.polyline([Lp,[lat2,lon2],Rp], { color:'#6cc0ff', weight:2, opacity:.95 }).addTo(layer);
+}
+
+async function refreshHFPoint() {
+  const status = document.getElementById('hfStatus');
+  if (status) status.textContent = 'Loading HF current…';
+
+  try {
+    ensureHFPointLayer();
+
+    // Ask Worker for a 25-hour “average” around the target in cm/s, 1.5 km radius
+    const u = new URL(HF_ONEPOINT_URL);
+    u.searchParams.set('hours', '25');
+    u.searchParams.set('uom', 'cms');      // Worker returns cm/s
+    u.searchParams.set('radiusM', '1500'); // average vectors within 1.5 km
+    u.searchParams.set('lat0', String(HF_TARGET.lat));
+    u.searchParams.set('lon0', String(HF_TARGET.lon));
+
+    const r = await fetch(u.toString(), { cache: 'no-store' });
+    if (!r.ok) throw new Error(`worker ${r.status}`);
+    const j = await r.json();
+
+    hfPointLayer.clearLayers();
+
+    if (!j || !isFinite(j.speed) || !isFinite(j.bearing)) {
+      if (status) status.textContent = 'HF Radar: no data';
+      return;
+    }
+
+    // Plot at nearest sample location if present, fallback to target
+    const lat = j.nearest?.lat ?? j.target?.lat ?? HF_TARGET.lat;
+    const lon = j.nearest?.lon ?? j.target?.lon ?? HF_TARGET.lon;
+
+    drawArrow(hfPointLayer, lat, lon, j.speed, j.bearing);
+
+    const speedLabel = `${j.speed.toFixed(2)} cm/s`;
+    const dirLabel   = `${j.bearing.toFixed(1)}° from N`;
+    const when       = j.nearest?.time || `${j.start} → ${j.end} UTC`;
+
+    const popupHtml  = `<div class="small mono">HF current ~${speedLabel} • ${dirLabel}<br/>` +
+                       `n=${j.n} samples • window: ${j.start} → ${j.end} UTC</div>`;
+    const dot = L.circleMarker([lat, lon], { radius: 4, color: '#6cc0ff', weight: 2, fillOpacity: 0.4 }).addTo(hfPointLayer);
+    dot.bindPopup(popupHtml);
+
+    if (status) status.textContent = `HF Radar: ${speedLabel} • ${dirLabel}`;
+  } catch (e) {
     if (status) status.textContent = 'HF Radar unavailable';
   }
 }
@@ -732,8 +700,9 @@ refreshAll();
 setInterval(refreshAll, REFRESH_MS);
 refreshCam();
 setInterval(refreshCam, 120000);
-refreshHFcsv();
-setInterval(refreshHFcsv, 60*60*1000); // update hourly (typical HF cadence)
+refreshHFPoint();
+setInterval(refreshHFPoint, 60*60*1000); // hourly refresh
+
 </script>
 <footer class="site-footer">
   <span id="clock">--:--</span> &nbsp;•&nbsp; Refreshes every 5 min
