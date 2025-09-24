@@ -9,14 +9,20 @@ jobs:
   fetch-and-build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # allow pushing to the repo
+      contents: write  # allow pushing with GITHUB_TOKEN
     steps:
       - name: Checkout (main)
         uses: actions/checkout@v4
         with:
-          ref: main                 # << make sure we commit to the branch Pages serves
+          ref: main
           persist-credentials: true
           fetch-depth: 0
+
+      - name: Debug git state
+        run: |
+          git --version
+          echo "Branch: $(git rev-parse --abbrev-ref HEAD)"
+          git status
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -33,13 +39,34 @@ jobs:
       - name: Show generated file (debug)
         run: |
           ls -lah assets/data || true
-          sed -n '1,80p' assets/data/hf_point.json || true
+          sed -n '1,120p' assets/data/hf_point.json || true
 
-      - name: Commit results
+      - name: Configure git user
         run: |
           git config user.name "gh-actions"
           git config user.email "actions@github.com"
-          git pull --rebase
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Commit if changed
+        id: commit
+        run: |
           git add assets/data/hf_point.json
-          git diff --staged --quiet || git commit -m "Update HF point JSON [skip ci]"
-          git push
+          if git diff --staged --quiet; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No changes to commit."
+          else
+            git commit -m "Update HF point JSON [skip ci]"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Pull (rebase) to avoid non-fast-forward
+        if: steps.commit.outputs.changed == 'true'
+        run: |
+          # Don't fail the job if there's a transient race
+          git pull --rebase || true
+
+      - name: Push
+        if: steps.commit.outputs.changed == 'true'
+        run: |
+          # If push fails (e.g., parallel run), try one more rebase-and-push
+          git push || (git pull --rebase && git push) || true
