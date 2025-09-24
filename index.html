@@ -598,41 +598,34 @@ async function refreshHFPoint() {
   if (status) status.textContent = 'Loading HF current…';
 
   try {
-    ensureHFPointLayer();
-
-    // Ask Worker for a 25-hour “average” around the target in cm/s, 1.5 km radius
-    const u = new URL(HF_ONEPOINT_URL);
-    u.searchParams.set('hours', '25');
-    u.searchParams.set('uom', 'cms');      // Worker returns cm/s
-    u.searchParams.set('radiusM', '1500'); // average vectors within 1.5 km
-    u.searchParams.set('lat0', String(HF_TARGET.lat));
-    u.searchParams.set('lon0', String(HF_TARGET.lon));
-
-    const r = await fetch(u.toString(), { cache: 'no-store' });
-    if (!r.ok) throw new Error(`worker ${r.status}`);
+    // Fetch same-origin JSON built by the Action
+    const r = await fetch('assets/data/hf_point.json', { cache: 'no-store' });
+    if (!r.ok) throw new Error(`hf_point ${r.status}`);
     const j = await r.json();
 
-    hfPointLayer.clearLayers();
+    hfPointLayer && hfPointLayer.clearLayers();
+    ensureHFPointLayer();
 
-    if (!j || !isFinite(j.speed) || !isFinite(j.bearing)) {
-      if (status) status.textContent = 'HF Radar: no data';
+    if (!j || !j.n || !isFinite(j.speed) || !isFinite(j.bearing)) {
+      if (status) status.textContent = 'HF Radar: no recent data';
       return;
     }
 
-    // Plot at nearest sample location if present, fallback to target
-    const lat = j.nearest?.lat ?? j.target?.lat ?? HF_TARGET.lat;
-    const lon = j.nearest?.lon ?? j.target?.lon ?? HF_TARGET.lon;
+    const lat = j.nearest?.lat ?? j.target?.lat ?? 37.7477;
+    const lon = j.nearest?.lon ?? j.target?.lon ?? -122.3020;
 
     drawArrow(hfPointLayer, lat, lon, j.speed, j.bearing);
 
-    const speedLabel = `${j.speed.toFixed(2)} cm/s`;
-    const dirLabel   = `${j.bearing.toFixed(1)}° from N`;
-    const when       = j.nearest?.time || `${j.start} → ${j.end} UTC`;
+    const unit = (j.uom || 'cm/s') === 'kts' ? 'kt' : 'cm/s';
+    const speedLabel = `${j.speed.toFixed(2)} ${unit}`;
+    const dirLabel = `${j.bearing.toFixed(1)}° from N`;
+    const when = j.nearest?.time || `${j.from} → ${j.to} UTC`;
 
-    const popupHtml  = `<div class="small mono">HF current ~${speedLabel} • ${dirLabel}<br/>` +
-                       `n=${j.n} samples • window: ${j.start} → ${j.end} UTC</div>`;
-    const dot = L.circleMarker([lat, lon], { radius: 4, color: '#6cc0ff', weight: 2, fillOpacity: 0.4 }).addTo(hfPointLayer);
-    dot.bindPopup(popupHtml);
+    const popupHtml = `<div class="small mono">HF current ~${speedLabel} • ${dirLabel}<br/>` +
+                      `window: ${j.from} → ${j.to} UTC</div>`;
+    L.circleMarker([lat, lon], { radius: 4, color: '#6cc0ff', weight: 2, fillOpacity: 0.4 })
+      .addTo(hfPointLayer)
+      .bindPopup(popupHtml);
 
     if (status) status.textContent = `HF Radar: ${speedLabel} • ${dirLabel}`;
   } catch (e) {
