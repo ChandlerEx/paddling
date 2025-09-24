@@ -86,6 +86,7 @@ def load_existing():
 def main():
     now = datetime.now(timezone.utc)
     end = round_down_hour(now)
+    generated_at = datetime.now(timezone.utc).isoformat()
 
     # try each tier until we find data
     last_debug = {}
