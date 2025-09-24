@@ -12,10 +12,10 @@ TIMEOUT = 60
 RETRIES = 5
 RETRY_SLEEP = 6
 TIERS = [
-    (6, 12),   # hours, boxKm
-    (12, 12),
-    (25, 12),
+    (6, 24),   # hours, boxKm  ← try wider first to catch the 6 km grid
+    (12, 24),
     (25, 24),
+    (25, 36),
 ]
 # --------------------------------
 
