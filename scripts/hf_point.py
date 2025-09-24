@@ -12,7 +12,7 @@ TIMEOUT = 60
 RETRIES = 5
 RETRY_SLEEP = 6
 TIERS = [
-    (6, 24),   # hours, boxKm  ← try wider first to catch the 6 km grid
+    (6, 24),    # hours, boxKm  ← wider box first to catch h_6km
     (12, 24),
     (25, 24),
     (25, 36),
@@ -137,18 +137,20 @@ def main():
                 "source_url": url_preview
             }
 
-    # If no tiers produced data, keep last good JSON if present
+    # If no tiers produced data, write the last debug payload (with URL) or keep last good file
     existing = load_existing()
-    if existing:
+    last_debug["generated_at"] = generated_at
+    if last_debug:
+        write_json(last_debug)  # includes source_url, hours, boxKm
+    elif existing:
         existing["generated_at"] = generated_at
         write_json(existing)
     else:
-        write_json(last_debug or {
+        write_json({
             "target": {"lat": LAT0, "lon": LON0},
             "uom": UOM, "n": 0, "error": "no data",
             "generated_at": generated_at
         })
-
 
 if __name__ == "__main__":
     main()
