@@ -124,6 +124,7 @@ def main():
                 "source_url": url_preview,
                 "tier_used": {"hours": hours, "boxKm": box_km}
             }
+            result["generated_at"] = generated_at
             write_json(result)
             return
         else:
@@ -139,12 +140,15 @@ def main():
     # If no tiers produced data, keep last good JSON if present
     existing = load_existing()
     if existing:
+        existing["generated_at"] = generated_at
         write_json(existing)
     else:
         write_json(last_debug or {
             "target": {"lat": LAT0, "lon": LON0},
-            "uom": UOM, "n": 0, "error": "no data"
+            "uom": UOM, "n": 0, "error": "no data",
+            "generated_at": generated_at
         })
+
 
 if __name__ == "__main__":
     main()
