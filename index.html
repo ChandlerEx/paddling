@@ -129,39 +129,6 @@
       <div class="status small" id="windTime">Loading…</div>
     </section>
 
-    <section class="card" id="tidesCard">
-      <h2>
-        <!-- tide gauge icon -->
-        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke="currentColor" fill="none">
-          <rect x="5" y="3" width="14" height="18" rx="2" stroke-width="2"/>
-          <path stroke-width="2" d="M7 8h10M7 12h10M7 16h10"/>
-        </svg>
-        Tides Today (MLLW)
-        <span class="links"><a id="tideMap" target="_blank" rel="noopener">Map</a></span>
-      </h2>
-      <ul class="list" id="tidesList"><li>Loading…</li></ul>
-      <div class="status small" id="tidesStatus"></div>
-    </section>
-
-    <section class="card" id="tideCard">
-      <h2>
-        <!-- tide icon -->
-        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-          <path stroke-width="2" stroke-linecap="round" d="M3 12h18M5 16c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2"/>
-        </svg>
-        Tide (Alameda — predictions)
-        <span class="links"><a id="tideMap" target="_blank" rel="noopener">Map</a></span>
-      </h2>
-      <div class="row">
-        <div class="big" id="tideNow">--</div><div class="unit">ft</div>
-        <div class="sub" id="tideTrend">—</div>
-      </div>
-      <ul class="list small">
-        <li>Next: <span id="tideNext">—</span></li>
-      </ul>
-      <div class="status small">Predicted highs/lows for 9414750</div>
-    </section>
-
     <section class="card" id="chopCard">
       <h2>
         <!-- wave icon -->
@@ -176,6 +143,39 @@
         <div class="sub" id="chopState">—</div>
       </div>
       <div class="status small">Estimated from wind at NOAA 9414750</div>
+    </section>
+
+    <section class="card" id="tideCard">
+      <h2>
+        <!-- tide icon -->
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+          <path stroke-width="2" stroke-linecap="round" d="M3 12h18M5 16c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2"/>
+        </svg>
+        Current Tide (Prediction)
+        <span class="links"><a id="tideMap" target="_blank" rel="noopener">Map</a></span>
+      </h2>
+      <div class="row">
+        <div class="big" id="tideNow">--</div><div class="unit">ft</div>
+        <div class="sub" id="tideTrend">—</div>
+      </div>
+      <ul class="list small">
+        <li>Next: <span id="tideNext">—</span></li>
+      </ul>
+      <div class="status small">Predicted highs/lows for 9414750</div>
+    </section>
+
+    <section class="card" id="tidesCard">
+      <h2>
+        <!-- tide gauge icon -->
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke="currentColor" fill="none">
+          <rect x="5" y="3" width="14" height="18" rx="2" stroke-width="2"/>
+          <path stroke-width="2" d="M7 8h10M7 12h10M7 16h10"/>
+        </svg>
+        Upcoming High/Low Tides
+        <span class="links"><a id="tideMap" target="_blank" rel="noopener">Map</a></span>
+      </h2>
+      <ul class="list" id="tidesList"><li>Loading…</li></ul>
+      <div class="status small" id="tidesStatus"></div>
     </section>
 
     <section class="card fullwidth" id="mapCard">
@@ -195,7 +195,7 @@ const REFRESH_MS             = 5 * 60 * 1000; // 5 minutes
 function updateStationsPill(){
   const pill = document.getElementById('stationsPill');
   if (!pill) return;
-  pill.textContent = `NOAA ${NOAA_TIDE_WIND_STATION} (Wind/Tides) • Chop from wind`;
+  pill.textContent = `NOAA ${NOAA_TIDE_WIND_STATION} (Wind/Tides + Predictions) • Chop from wind`;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -222,21 +222,21 @@ function splitStationBin(id) {
 async function fetchTideHiLo(station='9414750'){
   const base = 'https://api.tidesandcurrents.noaa.gov/api/prod/datagetter';
 
-  // Today and tomorrow
+  // yesterday .. tomorrow (to guarantee we have the last and next events)
   const now = new Date();
-  const today = now.toISOString().slice(0,10).replace(/-/g,'');
-  const tomorrow = new Date(now.getTime() + 24*60*60*1000)
-                      .toISOString().slice(0,10).replace(/-/g,'');
+  const y = new Date(now.getTime() - 24*60*60*1000);
+  const t = new Date(now.getTime() + 24*60*60*1000);
+  const ymd = d => d.toISOString().slice(0,10).replace(/-/g,'');
 
   const params = new URLSearchParams({
     product:'predictions',
     interval:'hilo',
     time_zone:'lst_ldt',
-    datum:'MLLW',         // ✅ add this
+    datum:'MLLW',
     units:'english',
     format:'json',
-    begin_date: today,
-    end_date: tomorrow,
+    begin_date: ymd(y),
+    end_date:   ymd(t),
     station
   });
 
@@ -249,28 +249,38 @@ async function fetchTideHiLo(station='9414750'){
 function renderTideFromPredictions(preds){
   const now = new Date();
   let prev=null, next=null;
-  for (const p of preds){
-    const t = new Date(p.t);
-    if (t <= now) prev = p; else { next = p; break; }
+  for (const p of (preds || [])){
+    const tt = new Date(p.t);
+    if (tt <= now) prev = p; else { next = p; break; }
   }
-  let trend='—';
+
+  let trend = '—';
   if (prev && next){
     trend = (prev.type==='L' && next.type==='H') ? 'flooding (rising)'
          : (prev.type==='H' && next.type==='L') ? 'ebbing (falling)'
          : '—';
+  } else if (next) {
+    // If it's before the first event of the day
+    trend = next.type === 'H' ? 'flooding (rising)' : 'ebbing (falling)';
   }
-  let nowFt=null;
+
+  // Estimate “now” height if we have a bracket; otherwise show next value
+  let nowFt = null;
   if (prev && next){
-    const t0=new Date(prev.t).getTime(), t1=new Date(next.t).getTime();
-    const y0=parseFloat(prev.v), y1=parseFloat(next.v);
-    const x=now.getTime();
+    const t0 = new Date(prev.t).getTime(), t1 = new Date(next.t).getTime();
+    const y0 = parseFloat(prev.v), y1 = parseFloat(next.v);
+    const x  = now.getTime();
     const frac = Math.min(1, Math.max(0, (x - t0)/(t1 - t0)));
     nowFt = y0 + (y1 - y0)*frac;
+  } else if (next){
+    nowFt = parseFloat(next.v); // fallback so the big number isn’t “--”
   }
-  const nowEl = document.getElementById('tideNow');
+
+  const nowEl   = document.getElementById('tideNow');
   const trendEl = document.getElementById('tideTrend');
-  const nextEl = document.getElementById('tideNext');
-  if (nowEl)   nowEl.textContent   = nowFt != null ? nowFt.toFixed(1) : '--';
+  const nextEl  = document.getElementById('tideNext');
+
+  if (nowEl)   nowEl.textContent   = nowFt != null && !Number.isNaN(nowFt) ? nowFt.toFixed(1) : '--';
   if (trendEl) trendEl.textContent = trend;
   if (nextEl && next){
     const dt = new Date(next.t);
@@ -490,10 +500,17 @@ setInterval(refreshCam, 120000);
 <footer class="site-footer">
   <span id="clock">--:--</span> &nbsp;•&nbsp; Refreshes every 5 min
 
-  <!-- Collapsible sources (keeps IDs, hides clutter on mobile) -->
+  <!-- Collapsible sources & methods (keeps IDs, hides clutter on mobile) -->
   <details class="sources">
-    <summary>Data sources</summary>
-    <div class="pill mono" id="stationsPill"></div>
+    <summary>Data Sources &amp; Methodology</summary>
+    <div class="mono small" style="margin-top:6px; line-height:1.35">
+      <p><strong>Station:</strong> NOAA <span class="mono">9414750</span> (Alameda) for wind and tides.</p>
+      <p><strong>Local Chop:</strong> estimated from Alameda wind using <span class="mono">height ≈ 0.10 × wind(knots)</span>, capped at ~3.5&nbsp;ft.
+        States: glassy (&lt;6&nbsp;kt), light (6–11), moderate (12–17), rough (18–24), very rough (25+).</p>
+      <p><strong>Current Tide (Prediction):</strong> NOAA tide predictions (datum MLLW, LST/LDT). “Now” is a linear interpolation between the last and next Hi/Lo event; trend shows
+        <em>flooding</em> (rising) or <em>ebbing</em> (falling).</p>
+      <p><strong>Why no offshore buoy/current:</strong> conditions outside the Golden Gate differ substantially from inside the Bay; this dashboard prioritizes Alameda-local signals.</p>
+    </div>
   </details>
 </footer>
 
