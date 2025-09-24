@@ -9,10 +9,14 @@ jobs:
   fetch-and-build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # to commit the generated file
+      contents: write  # allow pushing to the repo
     steps:
-      - name: Checkout
+      - name: Checkout (main)
         uses: actions/checkout@v4
+        with:
+          ref: main                 # ← IMPORTANT: update the branch GitHub Pages serves
+          persist-credentials: true
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,10 +30,17 @@ jobs:
         run: |
           python scripts/hf_point.py
 
+      - name: Show generated file (debug)
+        run: |
+          ls -lah assets/data || true
+          sed -n '1,80p' assets/data/hf_point.json || true
+
       - name: Commit results
         run: |
           git config user.name "gh-actions"
           git config user.email "actions@github.com"
+          git pull --rebase
           git add assets/data/hf_point.json
-          git commit -m "Update HF point JSON [skip ci]" || echo "No changes"
+          # commit only if something actually changed
+          git diff --staged --quiet || git commit -m "Update HF point JSON [skip ci]"
           git push
