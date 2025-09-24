@@ -2,31 +2,22 @@ import csv, io, json, math, os, sys, time
 from datetime import datetime, timedelta, timezone
 import requests
 
-# ----- Config -----
-# Target point (Alameda)
+# ------------ Config ------------
 LAT0 = 37.7477
 LON0 = -122.3020
-
-# Grid spacing is 6 km; this box catches at least one cell
-BOX_KM = 12
-
-# Time window (UTC), keep small so CSV is fast but recent
-HOURS = 6
-
-# Units: 'cms' for cm/s, 'kts' for knots
-UOM = "cms"
-
-# Output path in repo (ensure directory exists)
+UOM  = "cms"   # or "kts"
 OUT_PATH = "assets/data/hf_point.json"
-
-# Upstream endpoint
 BASE = "https://hfradar.ndbc.noaa.gov/tabdownload.php"
-
-# HTTP timeouts + retries (server can be slow)
-TIMEOUT = 60  # seconds
+TIMEOUT = 60
 RETRIES = 5
-RETRY_SLEEP = 6  # seconds
-# ------------------
+RETRY_SLEEP = 6
+TIERS = [
+    (6, 12),   # hours, boxKm
+    (12, 12),
+    (25, 12),
+    (25, 24),
+]
+# --------------------------------
 
 def round_down_hour(dt):
     return dt.replace(minute=0, second=0, microsecond=0)
@@ -45,24 +36,26 @@ def haversine_m(lat1, lon1, lat2, lon2):
     return 2*R*math.asin(math.sqrt(a))
 
 def fetch_csv(params):
+    last_text = ""
     for i in range(RETRIES + 1):
         try:
-            r = requests.get(BASE, params=params, timeout=TIMEOUT, headers={"Accept": "text/csv", "User-Agent": "Mozilla/5.0"})
+            r = requests.get(BASE, params=params, timeout=TIMEOUT,
+                             headers={"Accept": "text/csv", "User-Agent": "Mozilla/5.0"})
             if r.status_code == 200 and r.text.strip():
                 return r.text
-            # retry on upstream errors
             if r.status_code >= 500 or r.status_code == 429:
-                time.sleep(RETRY_SLEEP*(i+1))
-                continue
-            # non-retryable
-            return ""
+                time.sleep(RETRY_SLEEP*(i+1)); continue
+            last_text = r.text
+            break
         except requests.RequestException:
             time.sleep(RETRY_SLEEP*(i+1))
             continue
-    return ""
+    return last_text
 
 def parse_rows(text):
-    # Strip comments / blanks; expect header: time,latitude,longitude,u,v
+    if not text:
+        return []
+    # Keep only non-empty, non-comment lines
     lines = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
     if len(lines) <= 1:
         return []
@@ -70,99 +63,87 @@ def parse_rows(text):
     header = next(rdr, None)
     rows = []
     for row in rdr:
-        if len(row) < 5: 
-            continue
+        if len(row) < 5: continue
         t, la, lo, u, v = row[:5]
         try:
-            rows.append({
-                "time": t,
-                "lat": float(la),
-                "lon": float(lo),
-                "u": float(u),
-                "v": float(v)
-            })
+            rows.append({"time": t, "lat": float(la), "lon": float(lo), "u": float(u), "v": float(v)})
         except ValueError:
             pass
     return rows
 
-def main():
-    now = datetime.now(timezone.utc)
-    to_dt = round_down_hour(now)
-    from_dt = to_dt - timedelta(hours=HOURS)
-    from_str = from_dt.strftime("%Y-%m-%d %H:00:00")
-    to_str   = to_dt.strftime("%Y-%m-%d %H:00:00")
-
-    lat1, lon1, lat2, lon2 = build_bbox(LAT0, LON0, BOX_KM)
-
-    params = {
-        "from": from_str,
-        "to": to_str,
-        "lat": f"{lat1}",
-        "lng": f"{lon1}",
-        "lat2": f"{lat2}",
-        "lng2": f"{lon2}",
-        "uom": UOM,
-        "fmt": "csv"
-    }
-
-    csv_text = fetch_csv(params)
-    out = {
-        "target": {"lat": LAT0, "lon": LON0},
-        "bbox": {"lat1": lat1, "lon1": lon1, "lat2": lat2, "lon2": lon2},
-        "from": from_str, "to": to_str,
-        "uom": UOM, "hours": HOURS,
-        "n": 0
-    }
-
-    if not csv_text:
-        # keep previous value if exists
-        try:
-            with open(OUT_PATH, "r", encoding="utf-8") as f:
-                existing = json.load(f)
-            # just touch the file to keep it committed
-            with open(OUT_PATH, "w", encoding="utf-8") as f:
-                json.dump(existing, f, indent=2)
-            return
-        except FileNotFoundError:
-            with open(OUT_PATH, "w", encoding="utf-8") as f:
-                json.dump(out, f, indent=2)
-            return
-
-    rows = parse_rows(csv_text)
-    if not rows:
-        # same keep-previous behavior
-        try:
-            with open(OUT_PATH, "r", encoding="utf-8") as f:
-                existing = json.load(f)
-            with open(OUT_PATH, "w", encoding="utf-8") as f:
-                json.dump(existing, f, indent=2)
-            return
-        except FileNotFoundError:
-            with open(OUT_PATH, "w", encoding="utf-8") as f:
-                json.dump(out, f, indent=2)
-            return
-
-    # nearest single cell across the window (as requested)
-    nearest = min(rows, key=lambda r: haversine_m(LAT0, LON0, r["lat"], r["lon"]))
-    u = nearest["u"]; v = nearest["v"]
-    speed = math.hypot(u, v)
-    bearing = math.degrees(math.atan2(u, v))
-    if bearing < 0: bearing += 360.0
-
-    result = {
-        "target": {"lat": LAT0, "lon": LON0},
-        "nearest": nearest,             # includes lat, lon, time, u, v
-        "from": from_str, "to": to_str,
-        "u": u, "v": v,
-        "speed": speed,
-        "bearing": bearing,
-        "uom": UOM,
-        "n": 1
-    }
-
+def write_json(obj):
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
     with open(OUT_PATH, "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=2)
+        json.dump(obj, f, indent=2)
+
+def load_existing():
+    try:
+        with open(OUT_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+
+def main():
+    now = datetime.now(timezone.utc)
+    end = round_down_hour(now)
+
+    # try each tier until we find data
+    last_debug = {}
+    for hours, box_km in TIERS:
+        start = end - timedelta(hours=hours)
+        from_str = start.strftime("%Y-%m-%d %H:00:00")
+        to_str   = end.strftime("%Y-%m-%d %H:00:00")
+
+        lat1, lon1, lat2, lon2 = build_bbox(LAT0, LON0, box_km)
+        params = {
+            "from": from_str, "to": to_str,
+            "lat": f"{lat1}", "lng": f"{lon1}",
+            "lat2": f"{lat2}", "lng2": f"{lon2}",
+            "uom": UOM, "fmt": "csv"
+        }
+        url_preview = requests.Request('GET', BASE, params=params).prepare().url
+        csv_text = fetch_csv(params)
+        rows = parse_rows(csv_text)
+
+        if rows:
+            # nearest single grid cell (your requirement)
+            nearest = min(rows, key=lambda r: haversine_m(LAT0, LON0, r["lat"], r["lon"]))
+            u, v = nearest["u"], nearest["v"]
+            speed = math.hypot(u, v)
+            bearing = math.degrees(math.atan2(u, v)); 
+            if bearing < 0: bearing += 360.0
+
+            result = {
+                "target": {"lat": LAT0, "lon": LON0},
+                "nearest": nearest,  # includes time/lat/lon/u/v
+                "from": from_str, "to": to_str,
+                "hours": hours, "boxKm": box_km,
+                "uom": UOM, "n": 1,
+                "u": u, "v": v, "speed": speed, "bearing": bearing,
+                "source_url": url_preview,
+                "tier_used": {"hours": hours, "boxKm": box_km}
+            }
+            write_json(result)
+            return
+        else:
+            last_debug = {
+                "target": {"lat": LAT0, "lon": LON0},
+                "from": from_str, "to": to_str,
+                "hours": hours, "boxKm": box_km,
+                "uom": UOM, "n": 0,
+                "error": "no rows",
+                "source_url": url_preview
+            }
+
+    # If no tiers produced data, keep last good JSON if present
+    existing = load_existing()
+    if existing:
+        write_json(existing)
+    else:
+        write_json(last_debug or {
+            "target": {"lat": LAT0, "lon": LON0},
+            "uom": UOM, "n": 0, "error": "no data"
+        })
 
 if __name__ == "__main__":
     main()
