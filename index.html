@@ -582,9 +582,9 @@ async function refreshAll() {
     // Camera @ Crown Beach (Boardsports California)
     const cameraIcon = L.icon({
       iconUrl: 'assets/img/camera-icon.svg',  // make sure this path exists
-      iconSize: [24, 24],
-      iconAnchor: [12, 24],   // bottom center (so the tip sits on the point)
-      popupAnchor: [0, -12]
+      iconSize: [36, 36],       // 50% larger than 24x24
+      iconAnchor: [18, 36],     // bottom center of the icon
+      popupAnchor: [0, -18]     // popup just above the icon
     });
 
     const camLat = 37.7647, camLon = -122.2730;
@@ -598,7 +598,7 @@ async function refreshAll() {
     // IMPORTANT: add to the same layer group and extend bounds
     markersLayer.addLayer(camMarker);
     bounds.extend([camLat, camLon]);
-    
+
     // Fit to whatever we have now
     fitMarkers();
     document.getElementById('mapStatus').textContent = '';
