@@ -581,15 +581,24 @@ async function refreshAll() {
 
     // Camera @ Crown Beach (Boardsports California)
     const cameraIcon = L.icon({
-      iconUrl: 'assets/img/camera-icon.svg',
+      iconUrl: 'assets/img/camera-icon.svg',  // make sure this path exists
       iconSize: [24, 24],
-      iconAnchor: [12, 12],   // center bottom
+      iconAnchor: [12, 24],   // bottom center (so the tip sits on the point)
       popupAnchor: [0, -12]
     });
-    L.marker([37.7647, -122.2730], { icon: cameraIcon, title: "Boardsports California Webcam" })
-      .addTo(ensureMap())
-      .bindPopup("Boardsports California Webcam<br>600 Westline Dr, Alameda, CA 94501");
 
+    const camLat = 37.7647, camLon = -122.2730;
+
+    // create the marker
+    const camMarker = L.marker([camLat, camLon], {
+      icon: cameraIcon,
+      title: 'Boardsports California Webcam'
+    }).bindPopup('Boardsports California Webcam<br>600 Westline Dr, Alameda, CA 94501');
+
+    // IMPORTANT: add to the same layer group and extend bounds
+    markersLayer.addLayer(camMarker);
+    bounds.extend([camLat, camLon]);
+    
     // Fit to whatever we have now
     fitMarkers();
     document.getElementById('mapStatus').textContent = '';
