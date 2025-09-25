@@ -197,6 +197,15 @@
       <div class="status small">Predicted highs/lows for 9414750</div>
     </section>
 
+    <section class="card" id="sfbofsCard">
+      <h2>SFBOFS Predicted Current</h2>
+      <div class="row">
+        <div class="big" id="sfbofsSpd">--</div><div class="unit">kt</div>
+        <div class="sub" id="sfbofsDir">—° —</div>
+      </div>
+      <div class="status small" id="sfbofsWhen"></div>
+    </section>
+
     <section class="card" id="tidesCard">
       <h2>
         <!-- tide gauge icon -->
@@ -236,6 +245,41 @@
 const NOAA_TIDE_WIND_STATION = "9414750";     // Alameda
 const ERDDAP_BASE            = "https://erddap.cencoos.org/erddap";
 const REFRESH_MS             = 5 * 60 * 1000; // 5 minutes
+
+async function refreshSfbofsCurrent() {
+  const base = 'https://opendap.co-ops.nos.noaa.gov/thredds/ncss/grid/NOAA/SFBOFS/MODELS/Best';
+  const params = new URLSearchParams({
+    var: 'u_eastward',
+    var: 'v_northward',
+    latitude: 37.7477,
+    longitude: -122.3020,
+    vertCoord: 1,   // surface layer
+    accept: 'csv'
+  });
+
+  try {
+    const r = await fetch(base + '?' + params.toString());
+    if (!r.ok) throw new Error('bad response');
+    const txt = await r.text();
+    const [hdr,line] = txt.trim().split(/\r?\n/);
+    const cols = hdr.split(','), vals = line.split(',');
+    const row = {}; cols.forEach((c,i)=>row[c]=vals[i]);
+
+    const u = parseFloat(row.u_eastward), v = parseFloat(row.v_northward);
+    if (!isFinite(u) || !isFinite(v)) throw new Error('bad values');
+
+    const spdKt = Math.hypot(u,v) * 1.943844;
+    const dirDeg = (Math.atan2(u,v) * 180/Math.PI + 360) % 360;
+    const dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+    const dirCard = dirs[Math.round(dirDeg/22.5) % 16];
+
+    document.getElementById('sfbofsSpd').textContent = spdKt.toFixed(1);
+    document.getElementById('sfbofsDir').textContent = `${Math.round(dirDeg)}° ${dirCard}`;
+    document.getElementById('sfbofsWhen').textContent = row.time ? `Model time: ${row.time}` : '';
+  } catch (e) {
+    document.getElementById('sfbofsWhen').textContent = 'SFBOFS current unavailable';
+  }
+}
 
 function updateStationsPill(){
   const pill = document.getElementById('stationsPill');
@@ -654,6 +698,9 @@ async function refreshAll() {
   getAirTemp()
     .then(j => renderTemp(j, 'airTemp', 'airTempTime'))
     .catch(() => { document.getElementById('airTemp').textContent = '--'; });
+
+  // Currents
+  refreshSfbofsCurrent();
 
   // ---- MAP MARKERS (run in parallel; safe if some fail) ----
   (async () => {
