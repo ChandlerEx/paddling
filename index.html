@@ -197,15 +197,6 @@
       <div class="status small">Predicted highs/lows for 9414750</div>
     </section>
 
-    <section class="card" id="sfbofsCard">
-      <h2>SFBOFS Predicted Current</h2>
-      <div class="row">
-        <div class="big" id="sfbofsSpd">--</div><div class="unit">kt</div>
-        <div class="sub" id="sfbofsDir">—° —</div>
-      </div>
-      <div class="status small" id="sfbofsWhen"></div>
-    </section>
-
     <section class="card" id="tidesCard">
       <h2>
         <!-- tide gauge icon -->
@@ -218,18 +209,6 @@
       </h2>
       <ul class="list" id="tidesList"><li>Loading…</li></ul>
       <div class="status small" id="tidesStatus"></div>
-    </section>
-
-    <section class="card fullwidth" id="hfCard">
-      <h2>
-        <!-- currents icon -->
-        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-          <path stroke-width="2" stroke-linecap="round" d="M4 12c3 0 3-3 6-3s3 3 6 3 3-3 6-3"/>
-        </svg>
-        Bay Surface Currents (HF Radar)
-        <span class="links"><a id="hfInfo" target="_blank" rel="noopener">About HF Radar</a></span>
-      </h2>
-      <div class="status small" id="hfStatus">Loading current…</div>
     </section>
 
     <section class="card fullwidth" id="mapCard">
@@ -246,40 +225,6 @@ const NOAA_TIDE_WIND_STATION = "9414750";     // Alameda
 const ERDDAP_BASE            = "https://erddap.cencoos.org/erddap";
 const REFRESH_MS             = 5 * 60 * 1000; // 5 minutes
 
-async function refreshSfbofsCurrent() {
-  // point to your Worker
-  const worker = 'https://noaa-currents-proxy.chandler12.workers.dev/';
-
-  // exact file path (from catalog discovery, you already know how to list urlPath)
-  const urlPath = 'NOAA/SFBOFS/MODELS/2025/09/24/sfbofs.t09z.20250924.regulargrid.f000.nc';
-
-  const ncss = `https://opendap.co-ops.nos.noaa.gov/thredds/ncss/grid/${urlPath}?` +
-    `var=u_eastward&var=v_northward&latitude=37.7477&longitude=-122.3020&time=2025-09-24T09:00:00Z&vertCoord=1&accept=csv`;
-
-  const proxied = worker + '?u=' + encodeURIComponent(ncss);
-
-  try {
-    const r = await fetch(proxied);
-    if (!r.ok) throw new Error('bad response');
-    const txt = await r.text();
-    const [hdr,line] = txt.trim().split(/\r?\n/);
-    const cols = hdr.split(','), vals = line.split(',');
-    const row = {}; cols.forEach((c,i)=>row[c]=vals[i]);
-
-    const u = parseFloat(row.u_eastward), v = parseFloat(row.v_northward);
-    const spdKt = Math.hypot(u,v) * 1.943844;
-    const dirDeg = (Math.atan2(u,v)*180/Math.PI + 360) % 360;
-    const dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
-    const dirCard = dirs[Math.round(dirDeg/22.5) % 16];
-
-    document.getElementById('sfbofsSpd').textContent = spdKt.toFixed(1);
-    document.getElementById('sfbofsDir').textContent = `${Math.round(dirDeg)}° ${dirCard}`;
-    document.getElementById('sfbofsWhen').textContent = row.time;
-  } catch (e) {
-    document.getElementById('sfbofsWhen').textContent = 'SFBOFS current unavailable';
-  }
-}
-
 function updateStationsPill(){
   const pill = document.getElementById('stationsPill');
   if (!pill) return;
@@ -294,9 +239,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   refreshTidePredictions();                 // initial
   setInterval(refreshTidePredictions, 10*60*1000); // every 10 min
-
-  const hfInfo = document.getElementById('hfInfo');
-  if (hfInfo) hfInfo.href = 'https://ioos.noaa.gov/project/hf-radar/';
 
   // you can keep adding more stuff here...
 
@@ -594,88 +536,6 @@ async function getNoaaStationMetaLatLon(stationId) {
   } catch { return {}; }
 }
 
-/* ===== HF RADAR — Single point via Worker (no CORS) ===== */
-
-// Your Cloudflare Worker endpoint:
-const HF_ONEPOINT_URL = 'https://noaa-currents-proxy.chandler12.workers.dev/';
-
-// Target (closest to Alameda you specified)
-const HF_TARGET = { lat: 37.7477, lon: -122.3020 };
-
-// Leaflet overlay for the single current arrow
-let hfPointLayer, hfPointControlAdded = false;
-
-function ensureHFPointLayer() {
-  ensureMap();
-  if (!hfPointLayer) {
-    hfPointLayer = L.layerGroup();
-    // Add overlay toggle once
-    if (!hfPointControlAdded) {
-      L.control.layers(null, { 'HF Current @ Alameda': hfPointLayer }, { collapsed: false }).addTo(map);
-      hfPointControlAdded = true;
-    }
-    hfPointLayer.addTo(map); // ON by default
-  }
-  return hfPointLayer;
-}
-
-function drawArrow(layer, lat, lon, speed, bearingDeg) {
-  // Scale so short arrows are visible but not huge; speed is in cm/s by default
-  const SCALE_DEG_PER_UNIT = 0.00006; // tweak as desired
-  const d = speed * SCALE_DEG_PER_UNIT;
-
-  const th = bearingDeg * Math.PI/180;
-  const lat2 = lat + d * Math.cos(th);
-  const lon2 = lon + d * Math.sin(th);
-
-  L.polyline([[lat,lon],[lat2,lon2]], { color:'#6cc0ff', weight: 2, opacity:.95 }).addTo(layer);
-
-  const head = d * 0.35;
-  const Lp = [lat2 - head*Math.cos(th - Math.PI/8), lon2 - head*Math.sin(th - Math.PI/8)];
-  const Rp = [lat2 - head*Math.cos(th + Math.PI/8), lon2 - head*Math.sin(th + Math.PI/8)];
-  L.polyline([Lp,[lat2,lon2],Rp], { color:'#6cc0ff', weight:2, opacity:.95 }).addTo(layer);
-}
-
-async function refreshHFPoint() {
-  const status = document.getElementById('hfStatus');
-  if (status) status.textContent = 'Loading HF current…';
-
-  try {
-    // Fetch same-origin JSON built by the Action
-    const r = await fetch('assets/data/hf_point.json', { cache: 'no-store' });
-    if (!r.ok) throw new Error(`hf_point ${r.status}`);
-    const j = await r.json();
-
-    hfPointLayer && hfPointLayer.clearLayers();
-    ensureHFPointLayer();
-
-    if (!j || !j.n || !isFinite(j.speed) || !isFinite(j.bearing)) {
-      if (status) status.textContent = 'HF Radar: no recent data';
-      return;
-    }
-
-    const lat = j.nearest?.lat ?? j.target?.lat ?? 37.7477;
-    const lon = j.nearest?.lon ?? j.target?.lon ?? -122.3020;
-
-    drawArrow(hfPointLayer, lat, lon, j.speed, j.bearing);
-
-    const unit = (j.uom || 'cm/s') === 'kts' ? 'kt' : 'cm/s';
-    const speedLabel = `${j.speed.toFixed(2)} ${unit}`;
-    const dirLabel = `${j.bearing.toFixed(1)}° from N`;
-    const when = j.nearest?.time || `${j.from} → ${j.to} UTC`;
-
-    const popupHtml = `<div class="small mono">HF current ~${speedLabel} • ${dirLabel}<br/>` +
-                      `window: ${j.from} → ${j.to} UTC</div>`;
-    L.circleMarker([lat, lon], { radius: 4, color: '#6cc0ff', weight: 2, fillOpacity: 0.4 })
-      .addTo(hfPointLayer)
-      .bindPopup(popupHtml);
-
-    if (status) status.textContent = `HF Radar: ${speedLabel} • ${dirLabel}`;
-  } catch (e) {
-    if (status) status.textContent = 'HF Radar unavailable';
-  }
-}
-
 /* ====== CONTROLLER ====== */
 async function refreshAll() {
   // Wind
@@ -697,9 +557,6 @@ async function refreshAll() {
   getAirTemp()
     .then(j => renderTemp(j, 'airTemp', 'airTempTime'))
     .catch(() => { document.getElementById('airTemp').textContent = '--'; });
-
-  // Currents
-  refreshSfbofsCurrent();
 
   // ---- MAP MARKERS (run in parallel; safe if some fail) ----
   (async () => {
@@ -739,8 +596,6 @@ refreshAll();
 setInterval(refreshAll, REFRESH_MS);
 refreshCam();
 setInterval(refreshCam, 120000);
-refreshHFPoint();
-setInterval(refreshHFPoint, 60*60*1000); // hourly refresh
 
 </script>
 <footer class="site-footer">
