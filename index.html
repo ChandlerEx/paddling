@@ -415,6 +415,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const tide = document.getElementById('tideMap');
   if (tide) tide.href = `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;
 
+  const tide2 = document.getElementById('tideMap2');             // ← add this line
+  if (tide2) tide2.href = `https://tidesandcurrents.noaa.gov/stationhome.html?id=${NOAA_TIDE_WIND_STATION}`;  // ← and this line
+
 });
 
 /* ====== FETCHERS ====== */
@@ -576,6 +579,17 @@ async function refreshAll() {
       }
     } catch {}
 
+    // Camera @ Crown Beach (Boardsports California)
+    const cameraIcon = L.icon({
+      iconUrl: 'assets/img/camera-icon.svg',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],   // center bottom
+      popupAnchor: [0, -12]
+    });
+    L.marker([37.7647, -122.2730], { icon: cameraIcon, title: "Boardsports California Webcam" })
+      .addTo(ensureMap())
+      .bindPopup("Boardsports California Webcam<br>600 Westline Dr, Alameda, CA 94501");
+
     // Fit to whatever we have now
     fitMarkers();
     document.getElementById('mapStatus').textContent = '';
@@ -605,14 +619,55 @@ setInterval(refreshCam, 120000);
   <details class="sources">
     <summary>Data Sources &amp; Methodology</summary>
     <div class="mono small" style="margin-top:6px; line-height:1.35">
-      <p><strong>Station:</strong> NOAA <span class="mono">9414750</span> (Alameda) for wind and tides.</p>
-      <p><strong>Local Chop:</strong> estimated from Alameda wind using <span class="mono">height ≈ 0.10 × wind(knots)</span>, capped at ~3.5&nbsp;ft.
-        States: glassy (&lt;6&nbsp;kt), light (6–11), moderate (12–17), rough (18–24), very rough (25+).</p>
-      <p><strong>Current Tide (Prediction):</strong> NOAA tide predictions (datum MLLW, LST/LDT). “Now” is a linear interpolation between the last and next Hi/Lo event; trend shows
-        <em>flooding</em> (rising) or <em>ebbing</em> (falling).</p>
-      <p><strong>Why no offshore buoy/current:</strong> conditions outside the Golden Gate differ substantially from inside the Bay; this dashboard prioritizes Alameda-local signals.</p>
+
+      <p><strong>Wind (NOAA 9414750 – Alameda)</strong><br>
+      <em>Source:</em> NOAA CO-OPS “wind” product for station 9414750 (LST/LDT, English units).<br>
+      <em>Method:</em> The dashboard reads the latest observation fields: sustained speed (<code>s</code>, kt), gust (<code>g</code>, kt), and direction (<code>d</code>, degrees).
+      Values are displayed directly without smoothing or averaging.</p>
+
+      <p><strong>Local Chop (Estimated)</strong><br>
+      <em>Source:</em> Derived from the latest Alameda wind observation.<br>
+      <em>Method:</em> Quick bay heuristic: <code>chop height ≈ 0.10 × wind (kt)</code>, capped at ~3.5&nbsp;ft.
+      States: glassy (&lt;6 kt), light (6–11), moderate (12–17), rough (18–24), very rough (25+). This is an at-a-glance cue, not a wave model.</p>
+
+      <p><strong>Current Tide (Prediction)</strong><br>
+      <em>Source:</em> NOAA CO-OPS tide predictions for station 9414750 (datum <strong>MLLW</strong>, LST/LDT), using the <em>hilo</em> prediction list.<br>
+      <em>Method:</em> We find the most recent and the next Hi/Lo events relative to “now” and linearly interpolate their heights to estimate the tide height
+      at the current time. Trend is shown as <em>flooding (rising)</em> when moving Low→High and <em>ebbing (falling)</em> when moving High→Low.
+      This is a model prediction, not a live water-level sensor.</p>
+
+      <p><strong>Upcoming High/Low Tides</strong><br>
+      <em>Source:</em> Same NOAA CO-OPS predictions (MLLW, LST/LDT) for today’s date.<br>
+      <em>Method:</em> We list the day’s predicted High/Low events with local times and heights (ft) as provided by CO-OPS.</p>
+
+      <p><strong>Water Temperature (NOAA 9414750)</strong><br>
+      <em>Source:</em> NOAA CO-OPS “water_temperature” product at station 9414750.<br>
+      <em>Method:</em> The latest available temperature reading is displayed in °F (converted from °C by the API when needed), along with its observation time.</p>
+
+      <p><strong>Air Temperature (NOAA 9414750)</strong><br>
+      <em>Source:</em> NOAA CO-OPS “air_temperature” product at station 9414750.<br>
+      <em>Method:</em> The latest air temperature is shown in °F with its observation time; no averaging or smoothing is applied.</p>
+
+      <p><strong>Advisory Banner</strong><br>
+      <em>Source:</em> National Weather Service (NWS) Alerts API for marine zone <strong>PZZ530</strong>.<br>
+      <em>Method:</em> We poll active alerts; if a <em>Small Craft Advisory</em> is present, a banner appears with the advisory and posted end time (local).
+      If no alert is active or the API fails, the banner remains hidden.</p>
+
+      <p><strong>Camera (Boardsports California – Alameda)</strong><br>
+      <em>Source:</em> Public snapshot endpoint for the Alameda camera.<br>
+      <em>Method:</em> The image is refreshed about every 2 minutes with a cache-buster to avoid stale content; the status line shows the last refresh time.</p>
+
+      <p><strong>Station Map</strong><br>
+      <em>Source:</em> NOAA CO-OPS MDAPI station metadata for 9414750 (lat/lon), rendered with Leaflet and OpenStreetMap tiles.<br>
+      <em>Method:</em> The Alameda station is marked on the map; the view auto-fits to the available markers.</p>
+
+      <p><strong>Intentionally Omitted</strong><br>
+      HF Radar surface currents and SFBOFS model currents are not shown to avoid coarse spatial averaging and proxy/availability issues; this dashboard
+      focuses on reliable <em>local station signals</em> near Alameda.</p>
+
     </div>
   </details>
+
 </footer>
 
 </body>
