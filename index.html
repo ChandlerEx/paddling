@@ -746,6 +746,28 @@ async function refreshAll() {
 
     const camLat = 37.7647, camLon = -122.2730;
 
+    // KOAK (NWS station for visibility)
+    const koakIcon = L.icon({
+      iconUrl: 'assets/img/airport-icon.svg',
+      iconSize: [36, 36],
+      iconAnchor: [18, 36],
+      popupAnchor: [0, -18]
+    });
+
+    // Oakland International Airport (approx)
+    const koakLat = 37.7126, koakLon = -122.2197;
+
+    const koakMarker = L.marker([koakLat, koakLon], {
+      title: 'KOAK – NWS Station (Visibility)'
+    }).bindPopup(
+      `<strong>KOAK – NWS Station</strong><br>` +
+      `Visibility source for this dashboard.<br>` +
+      `<a href="https://api.weather.gov/stations/KOAK" target="_blank" rel="noopener">Station info</a>`
+    );
+
+    markersLayer.addLayer(koakMarker);
+    bounds.extend([koakLat, koakLon]);
+    
     // create the marker
     const camMarker = L.marker([camLat, camLon], {
       icon: cameraIcon,
