@@ -143,6 +143,39 @@
       <div class="status small" id="airTempTime"></div>
     </section>
 
+    <!-- NEW: Visibility (NWS KOAK) -->
+    <section class="card" id="visibilityCard">
+      <h2>
+        <!-- eye icon -->
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+          <path stroke-width="2" d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/>
+          <circle cx="12" cy="12" r="3" stroke-width="2"/>
+        </svg>
+        Visibility (KOAK)
+      </h2>
+      <div class="row">
+        <div class="big" id="visibilityMiles">--</div><div class="unit">mi</div>
+      </div>
+      <div class="status small" id="visibilityTime"></div>
+    </section>
+
+    <!-- NEW: Air Quality (AirNow) -->
+    <section class="card" id="aqiCard">
+      <h2>
+        <!-- leaf-ish icon -->
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+          <path stroke-width="2" d="M4 14c0-5 4-8 8-8 4.5 0 8 3.5 8 8 0 3.5-2.5 6-6 6H8a4 4 0 0 1-4-4z"/>
+        </svg>
+        Air Quality (AQI)
+        <span class="pill mono" id="aqiCategory">—</span>
+      </h2>
+      <div class="row">
+        <div class="big" id="aqiValue">--</div><div class="unit">AQI</div>
+      </div>
+      <div class="sub" id="aqiPollutant">—</div>
+      <div class="status small" id="aqiTime"></div>
+    </section>
+
     <section class="card" id="windCard">
       <h2>
         <!-- wind icon -->
@@ -224,6 +257,9 @@
 const NOAA_TIDE_WIND_STATION = "9414750";     // Alameda
 const ERDDAP_BASE            = "https://erddap.cencoos.org/erddap";
 const REFRESH_MS             = 5 * 60 * 1000; // 5 minutes
+const NWS_STATION = "KOAK";                 // Oakland Airport (closest, reliable vis)
+const AQI_LAT = 37.7647, AQI_LON = -122.2730; // Alameda/Crown Beach area
+const AIRNOW_API_KEY = "F464CD90-DC2C-41A1-84B0-AE40BBA1FFEC";
 
 function updateStationsPill(){
   const pill = document.getElementById('stationsPill');
@@ -246,6 +282,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 /* ====== HELPERS ====== */
+
+const mToMi = m => (m == null || isNaN(+m)) ? null : (+m / 1609.344);
+function aqiCategoryFor(v){
+  if (v == null || isNaN(+v)) return "—";
+  const n = +v;
+  if (n <= 50) return "Good";
+  if (n <= 100) return "Moderate";
+  if (n <= 150) return "Unhealthy for Sensitive Groups";
+  if (n <= 200) return "Unhealthy";
+  if (n <= 300) return "Very Unhealthy";
+  return "Hazardous";
+}
+
+function aqiColorFor(cat){
+  switch (cat){
+    case "Good": return "#32d296";                 // matches --good
+    case "Moderate": return "#ffd166";             // matches --warn
+    case "Unhealthy for Sensitive Groups": return "#ff9f43";
+    case "Unhealthy": return "#ff6b6b";            // matches --bad
+    case "Very Unhealthy": return "#c56cf0";
+    case "Hazardous": return "#6c5ce7";
+    default: return "rgba(255,255,255,.08)";
+  }
+}
 
 async function checkAdvisories() {
   // You can list multiple zones (comma-separated) if you want broader coverage.
@@ -422,6 +482,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ====== FETCHERS ====== */
 
+// Visibility (latest) from NWS (meters in properties.visibility.value)
+async function getVisibilityNWS() {
+  const url = `https://api.weather.gov/stations/${NWS_STATION}/observations/latest`;
+  const r = await fetch(url, { headers:{ "Accept":"application/geo+json" }, cache:"no-store" });
+  if (!r.ok) throw new Error("nws visibility");
+  return r.json();
+}
+
+// AirNow AQI near Alameda (PM2.5/O3 are typical; pick highest AQI reported)
+async function getAQI() {
+  const params = new URLSearchParams({
+    format: "application/json",
+    latitude: String(AQI_LAT),
+    longitude: String(AQI_LON),
+    distance: "10",                // miles search radius
+    API_KEY: AIRNOW_API_KEY
+  });
+  const url = `https://www.airnowapi.org/aq/observation/latLong/current/?${params}`;
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error("airnow aqi");
+  return r.json(); // array of observations by parameter
+}
+
 // Water temp (latest)
 async function getWaterTemp() {
   const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?` +
@@ -475,6 +558,56 @@ function fmtDateForNOAA(d){
 }
 
 /* ====== RENDERERS ====== */
+
+function renderVisibilityNWS(json){
+  const p = json?.properties || {};
+  const visM = p?.visibility?.value;             // meters (can be null)
+  const visMi = mToMi(visM);
+  const valEl = document.getElementById('visibilityMiles');
+  const tEl   = document.getElementById('visibilityTime');
+
+  if (visMi != null) valEl.textContent = fmt1(visMi);
+  else valEl.textContent = '--';
+
+  if (p.timestamp) tEl.textContent = `As of ${tzFmt(p.timestamp)}`;
+  else tEl.textContent = '';
+}
+
+function renderAQI(arr){
+  // Pick the highest AQI across pollutants (usually PM2.5 and/or O3 present)
+  let best = null;
+  for (const o of (arr || [])){
+    const v = +o.AQI;
+    if (!isNaN(v) && (best == null || v > best.AQI)) best = o;
+  }
+
+  const vEl   = document.getElementById('aqiValue');
+  const cEl   = document.getElementById('aqiCategory');
+  const polEl = document.getElementById('aqiPollutant');
+  const tEl   = document.getElementById('aqiTime');
+
+  if (!best){
+    vEl.textContent = '--';
+    cEl.textContent = '—';
+    cEl.style.background = 'rgba(255,255,255,.08)';
+    polEl.textContent = '—';
+    tEl.textContent = '';
+    return;
+  }
+
+  const cat = aqiCategoryFor(best.AQI);
+  vEl.textContent = Math.round(best.AQI);
+  cEl.textContent = cat;
+  cEl.style.background = aqiColorFor(cat);
+  polEl.textContent = `Dominant: ${best.ParameterName || '—'}`;
+  if (best.DateObserved && best.HourObserved != null){
+    // AirNow gives local date + hour; display simply
+    tEl.textContent = `Observed ${best.DateObserved} ${String(best.HourObserved).padStart(2,'0')}:00 (local)`;
+  } else {
+    tEl.textContent = '';
+  }
+}
+
 function renderWind(json) {
   const obs = (json?.data||[])[0]||{};
   const speedKt = parseFloat(obs.s);
@@ -560,6 +693,30 @@ async function refreshAll() {
   getAirTemp()
     .then(j => renderTemp(j, 'airTemp', 'airTempTime'))
     .catch(() => { document.getElementById('airTemp').textContent = '--'; });
+  
+  // Visibility (NWS)
+  getVisibilityNWS()
+    .then(renderVisibilityNWS)
+    .catch(() => {
+      const e = document.getElementById('visibilityMiles');
+      if (e) e.textContent = '--';
+      const t = document.getElementById('visibilityTime');
+      if (t) t.textContent = 'Visibility unavailable';
+    });
+
+  // Air Quality (AirNow)
+  getAQI()
+    .then(renderAQI)
+    .catch(() => {
+      const v = document.getElementById('aqiValue');
+      if (v) v.textContent = '--';
+      const c = document.getElementById('aqiCategory');
+      if (c){ c.textContent = '—'; c.style.background = 'rgba(255,255,255,.08)'; }
+      const p = document.getElementById('aqiPollutant');
+      if (p) p.textContent = '—';
+      const t = document.getElementById('aqiTime');
+      if (t) t.textContent = 'AQI unavailable';
+    });
 
   // ---- MAP MARKERS (run in parallel; safe if some fail) ----
   (async () => {
@@ -656,6 +813,14 @@ setInterval(refreshCam, 120000);
       <p><strong>Air Temperature (NOAA 9414750)</strong><br>
       <em>Source:</em> NOAA CO-OPS “air_temperature” product at station 9414750.<br>
       <em>Method:</em> The latest air temperature is shown in °F with its observation time; no averaging or smoothing is applied.</p>
+
+      <p><strong>Visibility (KOAK – NWS)</strong><br>
+      <em>Source:</em> National Weather Service observations for station KOAK (Oakland International Airport).<br>
+      <em>Method:</em> We read the latest <code>visibility.value</code> (meters) and convert to miles. Times reflect the station’s observation timestamp.</p>
+
+      <p><strong>Air Quality (AQI – AirNow)</strong><br>
+      <em>Source:</em> AirNow “current observations” near Alameda (≈25-mi radius).<br>
+      <em>Method:</em> We select the highest AQI among reported parameters (typically PM2.5 and O₃) and show the EPA category color. Time reflects the observation’s local hour.</p>
 
       <p><strong>Advisory Banner</strong><br>
       <em>Source:</em> National Weather Service (NWS) Alerts API for marine zone <strong>PZZ530</strong>.<br>
