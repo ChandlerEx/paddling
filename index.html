@@ -309,7 +309,7 @@ function aqiColorFor(cat){
 
 async function checkAdvisories() {
   // You can list multiple zones (comma-separated) if you want broader coverage.
-  const zones = 'PZZ530';
+  const zones = 'PZZ531';
   const url = `https://api.weather.gov/alerts/active?zone=${zones}`;
   try{
     const r = await fetch(url, { cache:'no-store' });
