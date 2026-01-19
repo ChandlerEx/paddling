@@ -11,5 +11,5 @@
   "n": 0,
   "error": "no rows",
   "source_url": "https://hfradar.ndbc.noaa.gov/tabdownload.php?from=2026-01-18+20%3A00%3A00&to=2026-01-19+21%3A00%3A00&lat=37.42337567567568&lng=-122.71216633469915&lat2=38.072024324324325&lng2=-121.89183366530087&uom=cms&fmt=csv",
-  "generated_at": "2026-01-19T21:26:52.697757+00:00"
+  "generated_at": "2026-01-19T21:45:24.248108+00:00"
 }
